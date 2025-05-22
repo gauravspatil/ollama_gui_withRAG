@@ -35,6 +35,11 @@ class OllamaChatGUI:
         self.model = self.models[0]
         self.stop_response = False
         self.citation_tag_counter = 0
+        self.rag_user_prompt_template = (
+            "You are an expert assistant. Use ONLY the following context to answer the question. "
+            "If the answer is not in the context, say you don't know. Do NOT use prior knowledge.\n\n"
+            "Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
+        )
         self.create_widgets()
 
     def stop_responding(self):
@@ -52,6 +57,10 @@ class OllamaChatGUI:
         self.model_var = tk.StringVar(value=self.model)
         self.model_dropdown = tk.OptionMenu(top_frame, self.model_var, *self.models, command=self.on_model_select)
         self.model_dropdown.grid(row=0, column=1, padx=(0,10))
+
+        # Add Edit RAG Prompt button (disabled until KB is loaded)
+        self.edit_rag_prompt_button = tk.Button(top_frame, text="Edit RAG Prompt", command=self.edit_rag_prompt, state=tk.DISABLED)
+        self.edit_rag_prompt_button.grid(row=0, column=2, padx=(0,10))
 
 
 
@@ -223,6 +232,32 @@ class OllamaChatGUI:
         progress_popup.destroy()
         messagebox.showinfo("Knowledge Base Loaded", f"Loaded {len(self.kb_chunks)} chunks from knowledge base.")
 
+        # Enable the Edit RAG Prompt button now that KB is loaded
+        self.edit_rag_prompt_button.config(state=tk.NORMAL)
+    def edit_rag_prompt(self):
+        # Popup to edit the RAG user prompt template
+        popup = tk.Toplevel(self.root)
+        popup.title("Edit RAG Prompt Template")
+        popup.geometry("600x320")
+        frame = tk.Frame(popup)
+        frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
+        label = tk.Label(frame, text="Edit the RAG prompt template below. Use {context} for the context and {question} for the user question.", wraplength=560, justify='left')
+        label.pack(anchor='w', pady=(0,8))
+        text_widget = tk.Text(frame, wrap=tk.WORD, width=70, height=10)
+        text_widget.pack(fill=tk.BOTH, expand=True)
+        text_widget.insert(tk.END, self.rag_user_prompt_template)
+        def save_and_close():
+            new_template = text_widget.get("1.0", tk.END).strip()
+            if "{context}" not in new_template or "{question}" not in new_template:
+                messagebox.showerror("Template Error", "Template must include {context} and {question}.")
+                return
+            self.rag_user_prompt_template = new_template
+            popup.destroy()
+        save_btn = tk.Button(frame, text="Save", command=save_and_close)
+        save_btn.pack(side=tk.RIGHT, pady=(8,0), padx=(0,8))
+        cancel_btn = tk.Button(frame, text="Cancel", command=popup.destroy)
+        cancel_btn.pack(side=tk.RIGHT, pady=(8,0), padx=(0,8))
+
     def split_text(self, text, chunk_size=400, overlap=50):
         # Simple sliding window chunking
         words = text.split()
@@ -379,11 +414,7 @@ class OllamaChatGUI:
                 citation_text = "\n\n[Citations: " + ", ".join([f"Chunk {i+1}" for i in citation_indices]) + "]"
             # RAG: Always send context and question as a single user message for best model compatibility
             if context:
-                user_prompt = (
-                    "You are an expert assistant. Use ONLY the following context to answer the question. "
-                    "If the answer is not in the context, say you don't know. Do NOT use prior knowledge.\n\n"
-                    f"Context:\n{context}\n\nQuestion: {user_message}\n\nAnswer:"
-                )
+                user_prompt = self.rag_user_prompt_template.format(context=context, question=user_message)
             else:
                 user_prompt = user_message
             payload = {
