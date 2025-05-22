@@ -1,0 +1,5 @@
+requests
+numpy
+PyPDF2
+python-docx
+tkinter
