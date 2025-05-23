@@ -89,6 +89,17 @@ class OllamaChatGUI:
             "If the answer is not in the context, say you don't know. Do NOT use prior knowledge.\n\n"
             "Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
         )
+        # Preferences (set before widgets for font/dark mode)
+        self.preferences = {
+            'rag_top_k': 2,
+            'rag_similarity_threshold': 0.05,
+            'rag_chunk_size': 400,
+            'rag_chunk_overlap': 50,
+            'auto_save_chat': True,
+            'default_model': self.model,
+            'font_size': 11,
+            'dark_mode': False,
+        }
         import sys
         if getattr(sys, 'frozen', False):
             # Running as a bundled app (PyInstaller)
@@ -103,6 +114,9 @@ class OllamaChatGUI:
 
         # Add menu for chat logs
         self.create_menu()
+
+        # Apply preferences (font/dark mode)
+        self.apply_preferences()
 
         # Bind close event to save chat
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -165,8 +179,151 @@ class OllamaChatGUI:
         chats_menu = tk.Menu(menubar, tearoff=0)
         chats_menu.add_command(label="List Previous Chats", command=self.show_chat_logs_dialog)
         menubar.add_cascade(label="Chats", menu=chats_menu)
+
+        # Settings menu
+        settings_menu = tk.Menu(menubar, tearoff=0)
+        settings_menu.add_command(label="Preferences...", command=self.show_preferences_dialog)
+        menubar.add_cascade(label="Settings", menu=settings_menu)
+
         # Add toplevel menu
         self.root.config(menu=menubar)
+
+    def show_preferences_dialog(self):
+        # Default preferences if not set
+        if not hasattr(self, 'preferences'):
+            self.preferences = {
+                'rag_top_k': 2,
+                'rag_similarity_threshold': 0.05,
+                'rag_chunk_size': 400,
+                'rag_chunk_overlap': 50,
+                'auto_save_chat': True,
+                'default_model': self.model,
+                'font_size': 11,
+                'dark_mode': False,
+                'temperature': 0.7,
+                'top_p': 1.0,
+                'max_tokens': 2048,
+            }
+        prefs = self.preferences
+        popup = tk.Toplevel(self.root)
+        popup.title("Preferences")
+        popup.geometry("440x540")
+        frame = tk.Frame(popup)
+        frame.pack(fill=tk.BOTH, expand=True, padx=18, pady=14)
+
+        # RAG parameters
+        tk.Label(frame, text="RAG Parameters", font=("Arial", 11, "bold")).grid(row=0, column=0, columnspan=2, sticky='w', pady=(0,2))
+        tk.Label(frame, text="Top K:").grid(row=1, column=0, sticky='w')
+        rag_top_k_var = tk.IntVar(value=prefs['rag_top_k'])
+        tk.Entry(frame, textvariable=rag_top_k_var).grid(row=1, column=1, sticky='ew')
+        tk.Label(frame, text="Similarity Threshold (0-1):").grid(row=2, column=0, sticky='w')
+        rag_sim_thresh_var = tk.DoubleVar(value=prefs['rag_similarity_threshold'])
+        tk.Entry(frame, textvariable=rag_sim_thresh_var).grid(row=2, column=1, sticky='ew')
+        tk.Label(frame, text="Chunk Size (words):").grid(row=3, column=0, sticky='w')
+        rag_chunk_size_var = tk.IntVar(value=prefs['rag_chunk_size'])
+        tk.Entry(frame, textvariable=rag_chunk_size_var).grid(row=3, column=1, sticky='ew')
+        tk.Label(frame, text="Chunk Overlap (words):").grid(row=4, column=0, sticky='w')
+        rag_chunk_overlap_var = tk.IntVar(value=prefs['rag_chunk_overlap'])
+        tk.Entry(frame, textvariable=rag_chunk_overlap_var).grid(row=4, column=1, sticky='ew')
+
+        # Model Parameters
+        tk.Label(frame, text="Model Parameters", font=("Arial", 11, "bold")).grid(row=5, column=0, columnspan=2, sticky='w', pady=(16,2))
+        tk.Label(frame, text="Temperature (0-1):").grid(row=6, column=0, sticky='w')
+        temp_var = tk.DoubleVar(value=prefs.get('temperature', 0.7))
+        tk.Entry(frame, textvariable=temp_var).grid(row=6, column=1, sticky='ew')
+        tk.Label(frame, text="Top-p (0-1):").grid(row=7, column=0, sticky='w')
+        topp_var = tk.DoubleVar(value=prefs.get('top_p', 1.0))
+        tk.Entry(frame, textvariable=topp_var).grid(row=7, column=1, sticky='ew')
+        tk.Label(frame, text="Max tokens:").grid(row=8, column=0, sticky='w')
+        max_tokens_var = tk.IntVar(value=prefs.get('max_tokens', 2048))
+        tk.Entry(frame, textvariable=max_tokens_var).grid(row=8, column=1, sticky='ew')
+
+        # GUI Preferences
+        tk.Label(frame, text="GUI Preferences", font=("Arial", 11, "bold")).grid(row=9, column=0, columnspan=2, sticky='w', pady=(16,2))
+        auto_save_var = tk.BooleanVar(value=prefs['auto_save_chat'])
+        tk.Checkbutton(frame, text="Auto-save chat logs", variable=auto_save_var).grid(row=10, column=0, columnspan=2, sticky='w')
+        tk.Label(frame, text="Default Model:").grid(row=11, column=0, sticky='w')
+        default_model_var = tk.StringVar(value=prefs['default_model'])
+        tk.OptionMenu(frame, default_model_var, *self.models).grid(row=11, column=1, sticky='ew')
+        tk.Label(frame, text="Font Size:").grid(row=12, column=0, sticky='w')
+        font_size_var = tk.IntVar(value=prefs['font_size'])
+        tk.Entry(frame, textvariable=font_size_var).grid(row=12, column=1, sticky='ew')
+        dark_mode_var = tk.BooleanVar(value=prefs['dark_mode'])
+        tk.Checkbutton(frame, text="Dark Mode", variable=dark_mode_var).grid(row=13, column=0, columnspan=2, sticky='w')
+
+        # Save/cancel buttons
+        btn_frame = tk.Frame(frame)
+        btn_frame.grid(row=14, column=0, columnspan=2, pady=(24,0), sticky='e')
+        def save_prefs():
+            try:
+                prefs['rag_top_k'] = int(rag_top_k_var.get())
+                prefs['rag_similarity_threshold'] = float(rag_sim_thresh_var.get())
+                prefs['rag_chunk_size'] = int(rag_chunk_size_var.get())
+                prefs['rag_chunk_overlap'] = int(rag_chunk_overlap_var.get())
+                prefs['auto_save_chat'] = bool(auto_save_var.get())
+                prefs['default_model'] = default_model_var.get()
+                prefs['font_size'] = int(font_size_var.get())
+                prefs['dark_mode'] = bool(dark_mode_var.get())
+                prefs['temperature'] = float(temp_var.get())
+                prefs['top_p'] = float(topp_var.get())
+                prefs['max_tokens'] = int(max_tokens_var.get())
+                self.apply_preferences()
+                popup.destroy()
+            except Exception:
+                messagebox.showerror("Invalid Input", "Please enter valid values for all preferences.")
+        save_btn = tk.Button(btn_frame, text="Save", command=save_prefs)
+        save_btn.pack(side=tk.RIGHT, padx=(0,8))
+        cancel_btn = tk.Button(btn_frame, text="Cancel", command=popup.destroy)
+        cancel_btn.pack(side=tk.RIGHT, padx=(0,8))
+        frame.grid_columnconfigure(1, weight=1)
+
+    def apply_preferences(self):
+        # Apply font size and dark mode immediately
+        prefs = getattr(self, 'preferences', None)
+        if not prefs:
+            return
+        font = ("Arial", prefs.get('font_size', 11))
+        widgets = [self.chat_area, self.entry]
+        # Top frame widgets
+        for w in [self.kb_button, self.model_dropdown, self.edit_rag_prompt_button, self.about_button, self.cot_checkbox]:
+            try:
+                w.config(font=font)
+            except Exception:
+                pass
+        for w in widgets:
+            try:
+                w.config(font=font)
+            except Exception:
+                pass
+        # Dark mode
+        if prefs.get('dark_mode', False):
+            bg = '#23272e'
+            fg = '#e6e6e6'
+            entry_bg = '#2d323b'
+            self.root.configure(bg=bg)
+            for widget in [self.chat_area, self.entry]:
+                widget.config(bg=entry_bg, fg=fg, insertbackground=fg)
+            for widget in [self.kb_button, self.model_dropdown, self.edit_rag_prompt_button, self.about_button, self.cot_checkbox, self.send_button, self.stop_button]:
+                try:
+                    widget.config(bg=bg, fg=fg, activebackground='#444', activeforeground=fg)
+                except Exception:
+                    pass
+        else:
+            # Reset to default
+            self.root.configure(bg=None)
+            for widget in [self.chat_area, self.entry]:
+                widget.config(bg='white', fg='black', insertbackground='black')
+            for widget in [self.kb_button, self.model_dropdown, self.edit_rag_prompt_button, self.about_button, self.cot_checkbox, self.send_button, self.stop_button]:
+                try:
+                    widget.config(bg=None, fg=None, activebackground=None, activeforeground=None)
+                except Exception:
+                    pass
+        # Set default model if changed
+        if self.model != prefs.get('default_model'):
+            self.model = prefs.get('default_model')
+            self.model_var.set(self.model)
+
+    # Removed show_model_params_dialog: Model parameters are now in Preferences dialog
 
     def show_chat_logs_dialog(self):
         # List all chat log files
@@ -226,8 +383,11 @@ class OllamaChatGUI:
                 messagebox.showerror("Delete Error", f"Could not delete chat log:\n{e}")
 
     def on_close(self):
-        # Save chat history to file on close
-        if hasattr(self, 'chat_history') and self.chat_history:
+        # Save chat history to file on close if auto-save is enabled
+        auto_save = True
+        if hasattr(self, 'preferences'):
+            auto_save = self.preferences.get('auto_save_chat', True)
+        if auto_save and hasattr(self, 'chat_history') and self.chat_history:
             import datetime
             if self.current_chat_file:
                 fpath = self.current_chat_file
@@ -381,8 +541,14 @@ class OllamaChatGUI:
         cancel_btn = tk.Button(frame, text="Cancel", command=popup.destroy)
         cancel_btn.pack(side=tk.RIGHT, pady=(8,0), padx=(0,8))
 
-    def split_text(self, text, chunk_size=400, overlap=50):
-        # Simple sliding window chunking
+    def split_text(self, text, chunk_size=None, overlap=None):
+        # Use preferences if available
+        if hasattr(self, 'preferences'):
+            chunk_size = chunk_size or self.preferences.get('rag_chunk_size', 400)
+            overlap = overlap or self.preferences.get('rag_chunk_overlap', 50)
+        else:
+            chunk_size = chunk_size or 400
+            overlap = overlap or 50
         words = text.split()
         chunks = []
         for i in range(0, len(words), chunk_size - overlap):
@@ -459,10 +625,14 @@ class OllamaChatGUI:
             messagebox.showerror("Embedding Model Error", f"Error running ollama pull for embedding model '{model}':\n{e}")
             return False
 
-    def retrieve_context(self, query, top_k=2):
+    def retrieve_context(self, query, top_k=None):
         if not hasattr(self, 'kb_chunks') or not hasattr(self, 'kb_embeddings'):
             return "", []
         import numpy as np
+        # Use preferences if available
+        prefs = getattr(self, 'preferences', {})
+        top_k = top_k or prefs.get('rag_top_k', 2)
+        threshold = prefs.get('rag_similarity_threshold', 0.05)
         query_emb = self.get_query_embedding(query)
         if not query_emb:
             return "", []
@@ -481,8 +651,6 @@ class OllamaChatGUI:
                 sims.append(float('-inf'))
         # Get top_k most similar chunks (ignore negative infinity)
         sims_np = np.array(sims)
-        # Only consider similarities above a reasonable threshold (e.g., 0.2)
-        threshold = 0.05
         filtered = [(i, sims_np[i]) for i in valid_indices if sims_np[i] > threshold]
         filtered = sorted(filtered, key=lambda x: x[1], reverse=True)[:top_k]
         context_chunks = [(i, self.kb_chunks[i]) for i, _ in filtered]
@@ -550,11 +718,18 @@ class OllamaChatGUI:
                 user_prompt = self.rag_user_prompt_template.format(context=context, question=user_message)
             else:
                 user_prompt = user_message
+            # Use model parameters from preferences
+            prefs = getattr(self, 'preferences', {})
             payload = {
                 "model": self.model,
                 "messages": [
                     {"role": "user", "content": user_prompt}
-                ]
+                ],
+                "options": {
+                    "temperature": prefs.get('temperature', 0.7),
+                    "top_p": prefs.get('top_p', 1.0),
+                    "num_predict": prefs.get('max_tokens', 2048)
+                }
             }
             resp = requests.post(f"{OLLAMA_API_URL}/api/chat", json=payload, stream=True)
             resp.raise_for_status()
