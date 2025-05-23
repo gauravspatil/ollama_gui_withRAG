@@ -89,7 +89,14 @@ class OllamaChatGUI:
             "If the answer is not in the context, say you don't know. Do NOT use prior knowledge.\n\n"
             "Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
         )
-        self.chat_logs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chat_logs")
+        import sys
+        if getattr(sys, 'frozen', False):
+            # Running as a bundled app (PyInstaller)
+            BASE_DIR = os.path.dirname(sys.executable)
+        else:
+            # Running as a script
+            BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        self.chat_logs_dir = os.path.join(BASE_DIR, "chat_logs")
         os.makedirs(self.chat_logs_dir, exist_ok=True)
         self.current_chat_file = None
         self.create_widgets()
