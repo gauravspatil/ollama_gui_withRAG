@@ -21,6 +21,9 @@ def get_running_model():
     except Exception as e:
         return None
 
+import os
+import json
+
 class OllamaChatGUI:
     def toggle_chain_of_thought(self):
         """
@@ -86,17 +89,26 @@ class OllamaChatGUI:
             "If the answer is not in the context, say you don't know. Do NOT use prior knowledge.\n\n"
             "Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
         )
+        self.chat_logs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chat_logs")
+        os.makedirs(self.chat_logs_dir, exist_ok=True)
+        self.current_chat_file = None
         self.create_widgets()
+
+        # Add menu for chat logs
+        self.create_menu()
+
+        # Bind close event to save chat
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def stop_responding(self):
         self.stop_response = True
     # Only keep this version of create_widgets
+
     def create_widgets(self):
         self.chain_of_thought_hidden = False
         # Add Load Knowledge Base button and model dropdown at the top
         top_frame = tk.Frame(self.root)
         top_frame.grid(row=0, column=0, sticky='ew', padx=10, pady=(10,0))
-
 
         self.kb_button = tk.Button(top_frame, text="Load Knowledge Base", command=self.load_knowledge_base)
         self.kb_button.grid(row=0, column=0, padx=(0,10))
@@ -109,20 +121,15 @@ class OllamaChatGUI:
         self.edit_rag_prompt_button = tk.Button(top_frame, text="Edit RAG Prompt", command=self.edit_rag_prompt, state=tk.DISABLED)
         self.edit_rag_prompt_button.grid(row=0, column=2, padx=(0,10))
 
+        # Add About button
+        self.about_button = tk.Button(top_frame, text="About", command=self.show_about)
+        self.about_button.grid(row=0, column=3, padx=(0,10))
+
         # Add Hide Chain of Thought checkbox
         self.cot_var = tk.BooleanVar(value=False)
         self.cot_checkbox = tk.Checkbutton(top_frame, text="Hide Chain of Thought", variable=self.cot_var, command=self.toggle_chain_of_thought)
         self.cot_checkbox.grid(row=0, column=4, padx=(0,10))
 
-
-
-        # (Requirements button removed for packaged distribution)
-
-        # Add About button
-        self.about_button = tk.Button(top_frame, text="About", command=self.show_about)
-        self.about_button.grid(row=0, column=3, padx=(0,10))
-
-
         # Chat area
         self.chat_area = scrolledtext.ScrolledText(self.root, wrap=tk.WORD, state='disabled', width=60, height=20)
         self.chat_area.grid(row=1, column=0, padx=10, pady=10, sticky='nsew')
@@ -145,30 +152,87 @@ class OllamaChatGUI:
         # Configure grid weights for resizing
         self.root.grid_rowconfigure(1, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
+    def create_menu(self):
+        menubar = tk.Menu(self.root)
+        # Chats menu
+        chats_menu = tk.Menu(menubar, tearoff=0)
+        chats_menu.add_command(label="List Previous Chats", command=self.show_chat_logs_dialog)
+        menubar.add_cascade(label="Chats", menu=chats_menu)
+        # Add toplevel menu
+        self.root.config(menu=menubar)
 
+    def show_chat_logs_dialog(self):
+        # List all chat log files
+        files = [f for f in os.listdir(self.chat_logs_dir) if f.endswith(".json")]
+        files.sort(reverse=True)
+        popup = tk.Toplevel(self.root)
+        popup.title("Previous Chats")
+        popup.geometry("400x300")
+        frame = tk.Frame(popup)
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        listbox = tk.Listbox(frame, width=50, height=10)
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        for fname in files:
+            listbox.insert(tk.END, fname)
+        scrollbar = tk.Scrollbar(frame, orient="vertical", command=listbox.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        listbox.config(yscrollcommand=scrollbar.set)
 
-        # Chat area
-        self.chat_area = scrolledtext.ScrolledText(self.root, wrap=tk.WORD, state='disabled', width=60, height=20)
-        self.chat_area.grid(row=1, column=0, padx=10, pady=10, sticky='nsew')
+        btn_frame = tk.Frame(popup)
+        btn_frame.pack(fill=tk.X, pady=(10,0))
+        open_btn = tk.Button(btn_frame, text="Open", command=lambda: self.open_selected_chat(listbox, files, popup))
+        open_btn.pack(side=tk.LEFT, padx=5)
+        del_btn = tk.Button(btn_frame, text="Delete", command=lambda: self.delete_selected_chat(listbox, files, popup))
+        del_btn.pack(side=tk.LEFT, padx=5)
+        close_btn = tk.Button(btn_frame, text="Close", command=popup.destroy)
+        close_btn.pack(side=tk.RIGHT, padx=5)
 
-        # Entry and send button at the bottom
-        entry_frame = tk.Frame(self.root)
-        entry_frame.grid(row=2, column=0, sticky='ew', padx=10, pady=(0,10))
-        self.entry = tk.Entry(entry_frame, width=50)
-        self.entry.pack(side=tk.LEFT, expand=True, fill=tk.X)
-        self.entry.bind('<Return>', lambda event: self.send_message())
-        self.send_button = tk.Button(entry_frame, text="Send", command=self.send_message)
-        self.send_button.pack(side=tk.LEFT, padx=10)
+    def open_selected_chat(self, listbox, files, popup):
+        sel = listbox.curselection()
+        if not sel:
+            messagebox.showwarning("No Selection", "Please select a chat log to open.")
+            return
+        fname = files[sel[0]]
+        fpath = os.path.join(self.chat_logs_dir, fname)
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.chat_history = data.get("chat_history", [])
+            self.current_chat_file = fpath
+            self.update_chat_area_chain_of_thought()
+            popup.destroy()
+        except Exception as e:
+            messagebox.showerror("Open Error", f"Could not open chat log:\n{e}")
 
-        # Stop Responding button at the very bottom
-        stop_frame = tk.Frame(self.root)
-        stop_frame.grid(row=3, column=0, sticky='ew', padx=10, pady=(0,10))
-        self.stop_button = tk.Button(stop_frame, text="Stop Responding", command=self.stop_responding)
-        self.stop_button.pack(fill=tk.X)
+    def delete_selected_chat(self, listbox, files, popup):
+        sel = listbox.curselection()
+        if not sel:
+            messagebox.showwarning("No Selection", "Please select a chat log to delete.")
+            return
+        fname = files[sel[0]]
+        fpath = os.path.join(self.chat_logs_dir, fname)
+        if messagebox.askyesno("Delete Chat", f"Are you sure you want to delete '{fname}'?"):
+            try:
+                os.remove(fpath)
+                listbox.delete(sel[0])
+            except Exception as e:
+                messagebox.showerror("Delete Error", f"Could not delete chat log:\n{e}")
 
-        # Configure grid weights for resizing
-        self.root.grid_rowconfigure(1, weight=1)
-        self.root.grid_columnconfigure(0, weight=1)
+    def on_close(self):
+        # Save chat history to file on close
+        if hasattr(self, 'chat_history') and self.chat_history:
+            import datetime
+            if self.current_chat_file:
+                fpath = self.current_chat_file
+            else:
+                dt = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                fpath = os.path.join(self.chat_logs_dir, f"chat_{dt}.json")
+            try:
+                with open(fpath, "w", encoding="utf-8") as f:
+                    json.dump({"chat_history": self.chat_history}, f, indent=2, ensure_ascii=False)
+            except Exception as e:
+                messagebox.showerror("Save Error", f"Could not save chat log:\n{e}")
+        self.root.destroy()
  
     def show_about(self):
         import webbrowser

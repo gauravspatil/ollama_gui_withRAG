@@ -34,6 +34,45 @@ coverage.xml
 *.manifest
 *.spec
 
+# Chat logs (user data, not code)
+chat_logs/
+
+# Jupyter Notebooks (if any are generated)
+*.ipynb
+
+# MacOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Python virtual environments
+venv/
+.env/
+env/
+
+# Log files
+*.log
+
+# Backup files
+*~
+*.bak
+*.swp
+*.swo
+
+# Ignore PyInstaller output folders (redundant, but explicit)
+build/
+dist/
+
+# Ignore test output
+test_output/
+
+# Ignore coverage output
+coverage/
+htmlcov/
+
 # VS Code
 .vscode/
 
