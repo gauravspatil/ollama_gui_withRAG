@@ -22,6 +22,52 @@ def get_running_model():
         return None
 
 class OllamaChatGUI:
+    def toggle_chain_of_thought(self):
+        """
+        Toggle hiding/showing chain of thought in the chat area.
+        """
+        self.chain_of_thought_hidden = self.cot_var.get()
+        self.update_chat_area_chain_of_thought()
+
+    def update_chat_area_chain_of_thought(self):
+        """
+        Re-render the chat area, hiding or showing chain of thought as needed.
+        """
+        # Save scroll position
+        yview = self.chat_area.yview()
+        self.chat_area.config(state='normal')
+        # To support unhiding, we need to reconstruct the chat from the message history
+        # We'll keep a list of (sender, message) tuples as self.chat_history
+        if not hasattr(self, 'chat_history'):
+            # If chat_history doesn't exist, build it from the current chat area (best effort, only for first run)
+            self.chat_history = []
+            lines = self.chat_area.get('1.0', tk.END).splitlines()
+            current_sender = None
+            current_message = []
+            for line in lines:
+                if line.endswith(':') and not line.startswith(' '):
+                    if current_sender is not None:
+                        self.chat_history.append((current_sender, '\n'.join(current_message)))
+                    current_sender = line[:-1]
+                    current_message = []
+                else:
+                    current_message.append(line)
+            if current_sender is not None:
+                self.chat_history.append((current_sender, '\n'.join(current_message)))
+
+        # Remove all content
+        self.chat_area.delete('1.0', tk.END)
+        import re
+        for sender, message in getattr(self, 'chat_history', []):
+            if getattr(self, 'chain_of_thought_hidden', False):
+                # Hide complete <think>...</think> blocks
+                message = re.sub(r'<think>[\s\S]*?</think>', '[Chain of thought hidden]', message, flags=re.IGNORECASE)
+                # Hide any remaining unmatched <think> blocks (i.e., <think> without </think>)
+                if '<think>' in message and '</think>' not in message:
+                    message = re.sub(r'<think>[\s\S]*', '[Chain of thought hidden]', message, flags=re.IGNORECASE)
+            self.chat_area.insert(tk.END, f"{sender}: {message}\n")
+        self.chat_area.config(state='disabled')
+        self.chat_area.yview_moveto(yview[0])
     
     
     def __init__(self, root):
@@ -46,6 +92,7 @@ class OllamaChatGUI:
         self.stop_response = True
     # Only keep this version of create_widgets
     def create_widgets(self):
+        self.chain_of_thought_hidden = False
         # Add Load Knowledge Base button and model dropdown at the top
         top_frame = tk.Frame(self.root)
         top_frame.grid(row=0, column=0, sticky='ew', padx=10, pady=(10,0))
@@ -61,6 +108,11 @@ class OllamaChatGUI:
         # Add Edit RAG Prompt button (disabled until KB is loaded)
         self.edit_rag_prompt_button = tk.Button(top_frame, text="Edit RAG Prompt", command=self.edit_rag_prompt, state=tk.DISABLED)
         self.edit_rag_prompt_button.grid(row=0, column=2, padx=(0,10))
+
+        # Add Hide Chain of Thought checkbox
+        self.cot_var = tk.BooleanVar(value=False)
+        self.cot_checkbox = tk.Checkbutton(top_frame, text="Hide Chain of Thought", variable=self.cot_var, command=self.toggle_chain_of_thought)
+        self.cot_checkbox.grid(row=0, column=4, padx=(0,10))
 
 
 
@@ -392,16 +444,26 @@ class OllamaChatGUI:
         threading.Thread(target=self.get_llm_response, args=(user_message,), daemon=True).start()
 
     def append_chat(self, sender, message, streaming=False):
-        self.chat_area.config(state='normal')
+        # Maintain chat history for hide/unhide chain of thought
+        if not hasattr(self, 'chat_history'):
+            self.chat_history = []
         if streaming and sender == self.model:
             # Insert sender label and set last_agent_index to right after the label
+            self.chat_area.config(state='normal')
             self.chat_area.insert(tk.END, f"{sender}:\n")
             self.last_agent_index = self.chat_area.index(tk.END)
+            self.chat_area.config(state='disabled')
+            self.chat_area.see(tk.END)
+            # For streaming, add a placeholder to chat_history (will be updated in update_last_agent_message_stream)
+            self.chat_history.append((sender, ""))
         else:
+            self.chat_area.config(state='normal')
             self.chat_area.insert(tk.END, f"{sender}: {message}\n")
             self.last_agent_index = None
-        self.chat_area.config(state='disabled')
-        self.chat_area.see(tk.END)
+            self.chat_area.config(state='disabled')
+            self.chat_area.see(tk.END)
+            self.chat_history.append((sender, message))
+        # Do not update chain of thought visibility here; only update on toggle
 
     def get_llm_response(self, user_message):
         try:
@@ -494,12 +556,21 @@ class OllamaChatGUI:
         if hasattr(self, 'last_agent_index') and self.last_agent_index:
             if append:
                 self.chat_area.insert(tk.END, message)
+                # Update last message in chat_history
+                if hasattr(self, 'chat_history') and self.chat_history:
+                    sender, prev_msg = self.chat_history[-1]
+                    self.chat_history[-1] = (sender, prev_msg + message)
             else:
                 # First chunk: clear any previous content after label
                 self.chat_area.delete(self.last_agent_index, tk.END)
                 self.chat_area.insert(tk.END, message)
+                # Set last message in chat_history
+                if hasattr(self, 'chat_history') and self.chat_history:
+                    sender, _ = self.chat_history[-1]
+                    self.chat_history[-1] = (sender, message)
         self.chat_area.config(state='disabled')
         self.chat_area.see(tk.END)
+        # Do not update chain of thought visibility here; only update on toggle
     
 
 def main():
