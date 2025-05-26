@@ -1,9 +1,50 @@
+def set_dark_mode_popup(popup):
+    """Apply dark mode styling to a popup and all its child widgets recursively."""
+    bg = '#23272e'
+    fg = '#e6e6e6'
+    entry_bg = '#2d323b'
+    popup.configure(bg=bg)
+    border = '#444a52'
+    def style_widget(widget):
+        # Set widget-specific colors and borders
+        if isinstance(widget, (tk.Frame, tk.LabelFrame)):
+            widget.config(bg=bg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
+        elif isinstance(widget, tk.Label):
+            widget.config(bg=bg, fg=fg)
+        elif isinstance(widget, tk.Entry):
+            widget.config(bg=entry_bg, fg=fg, insertbackground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
+        elif isinstance(widget, tk.Text):
+            widget.config(bg=entry_bg, fg=fg, insertbackground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
+        elif isinstance(widget, tk.Button):
+            widget.config(bg=bg, fg=fg, activebackground='#444', activeforeground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1, borderwidth=1)
+        elif isinstance(widget, tk.Checkbutton):
+            widget.config(bg=bg, fg=fg, activebackground='#444', activeforeground=fg, selectcolor=bg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
+        elif isinstance(widget, tk.Listbox):
+            widget.config(bg=entry_bg, fg=fg, selectbackground='#444', selectforeground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
+        elif isinstance(widget, tk.Scrollbar):
+            widget.config(bg=bg, troughcolor=bg, activebackground='#444', highlightbackground=border, highlightcolor=border, highlightthickness=1)
+        elif isinstance(widget, scrolledtext.ScrolledText):
+            widget.config(bg=entry_bg, fg=fg, insertbackground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
+        # ttk Combobox and OptionMenu
+        try:
+            import tkinter.ttk as ttk
+            if isinstance(widget, ttk.Combobox):
+                style = ttk.Style()
+                style.theme_use('clam')
+                style.configure('TCombobox', fieldbackground=entry_bg, background=entry_bg, foreground=fg, bordercolor=border, lightcolor=border, darkcolor=border, borderwidth=1)
+                style.map('TCombobox', fieldbackground=[('readonly', entry_bg)], background=[('readonly', entry_bg)], foreground=[('readonly', fg)])
+                widget.configure(style='TCombobox')
+        except Exception:
+            pass
+        # Recursively style children
+        for child in getattr(widget, 'winfo_children', lambda:[])():
+            style_widget(child)
+    style_widget(popup)
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
 
-def show_about_popup(root):
+def show_about_popup(popup):
     import webbrowser
-    popup = tk.Toplevel(root)
     popup.title("About")
     popup.geometry("480x370")
     frame = tk.Frame(popup)
@@ -43,16 +84,28 @@ def show_about_popup(root):
     close_btn = tk.Button(frame, text="Close", command=popup.destroy)
     close_btn.pack(anchor='e', pady=(16,0))
 
-def show_citation_popup(root, kb_chunks, chunk_indices):
-    popup = tk.Toplevel(root)
-    popup.title("Cited Knowledge Base Chunks")
+def show_citation_popup(parent, chunk_indices):
+    import tkinter as tk
+    from tkinter import scrolledtext
+    root = parent.root if hasattr(parent, 'root') else parent
+    kb_chunks = getattr(parent, 'kb_chunks', [])
+    popup = tk.Toplevel(parent.root)
+    popup.title("Citations")
     popup.geometry("600x400")
-    text_area = scrolledtext.ScrolledText(popup, wrap=tk.WORD, state='normal', width=80, height=20)
-    text_area.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
+    frame = tk.Frame(popup)
+    frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
+    label = tk.Label(frame, text="Cited Knowledge Chunks:", font=("Arial", 11, "bold"))
+    label.pack(anchor='w', pady=(0,8))
+    text = scrolledtext.ScrolledText(frame, wrap=tk.WORD, width=70, height=18, state='normal')
+    text.pack(fill=tk.BOTH, expand=True)
     for idx in chunk_indices:
-        chunk_num = idx + 1
-        chunk_text = kb_chunks[idx] if kb_chunks and idx < len(kb_chunks) else '[Missing chunk]'
-        text_area.insert(tk.END, f"--- Chunk {chunk_num} ---\n{chunk_text}\n\n")
-    text_area.config(state='disabled')
-    close_btn = tk.Button(popup, text="Close", command=popup.destroy)
-    close_btn.pack(pady=(0,10))
+        if 0 <= idx < len(kb_chunks):
+            chunk = kb_chunks[idx]
+            text.insert(tk.END, f"Chunk {idx+1}:\n{chunk}\n\n")
+        else:
+            text.insert(tk.END, f"Chunk {idx+1}: [Not found]\n\n")
+    text.config(state='disabled')
+    close_btn = tk.Button(frame, text="Close", command=popup.destroy)
+    close_btn.pack(anchor='e', pady=(10,0))
+    if hasattr(parent, 'preferences') and parent.preferences.get('dark_mode', False):
+        set_dark_mode_popup(popup)

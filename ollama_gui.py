@@ -1,4 +1,3 @@
-
 import tkinter as tk
 from tkinter import scrolledtext, messagebox
 import requests
@@ -83,12 +82,49 @@ class OllamaChatGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Ollama LLM Chat GUI")
+        import sys
+        if getattr(sys, 'frozen', False):
+            BASE_DIR = os.path.dirname(sys.executable)
+        else:
+            BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        self.BASE_DIR = BASE_DIR
+        self.chat_logs_dir = os.path.join(BASE_DIR, "chat_logs")
+        os.makedirs(self.chat_logs_dir, exist_ok=True)
+        self.current_chat_file = None
+
+        # Load preferences if available
+        self.preferences_path = os.path.join(BASE_DIR, "preferences.json")
+        self.preferences = None
+        if os.path.exists(self.preferences_path):
+            try:
+                with open(self.preferences_path, "r", encoding="utf-8") as f:
+                    self.preferences = json.load(f)
+            except Exception:
+                self.preferences = None
         self.models = self.get_all_models()
         if not self.models:
             messagebox.showerror("Model Error", "No models found in Ollama.")
             self.root.destroy()
             return
-        self.model = self.models[0]
+        # Set defaults if not loaded
+        if not self.preferences:
+            self.preferences = {
+                'rag_top_k': 2,
+                'rag_similarity_threshold': 0.05,
+                'rag_chunk_size': 400,
+                'rag_chunk_overlap': 50,
+                'auto_save_chat': True,
+                'default_model': self.models[0],
+                'font_size': 11,
+                'dark_mode': False,
+                'temperature': 0.7,
+                'top_p': 1.0,
+                'max_tokens': 2048,
+            }
+        # Ensure default_model is valid
+        if self.preferences.get('default_model') not in self.models:
+            self.preferences['default_model'] = self.models[0]
+        self.model = self.preferences.get('default_model', self.models[0])
         self.stop_response = False
         self.citation_tag_counter = 0
         self.rag_user_prompt_template = (
@@ -96,36 +132,10 @@ class OllamaChatGUI:
             "If the answer is not in the context, say you don't know. Do NOT use prior knowledge.\n\n"
             "Context:\n{context}\n\nChat History:\n{history}\n\nQuestion: {question}\n\nAnswer:"
         )
-        # Preferences (set before widgets for font/dark mode)
-        self.preferences = {
-            'rag_top_k': 2,
-            'rag_similarity_threshold': 0.05,
-            'rag_chunk_size': 400,
-            'rag_chunk_overlap': 50,
-            'auto_save_chat': True,
-            'default_model': self.model,
-            'font_size': 11,
-            'dark_mode': False,
-        }
-        import sys
-        if getattr(sys, 'frozen', False):
-            # Running as a bundled app (PyInstaller)
-            BASE_DIR = os.path.dirname(sys.executable)
-        else:
-            # Running as a script
-            BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-        self.chat_logs_dir = os.path.join(BASE_DIR, "chat_logs")
-        os.makedirs(self.chat_logs_dir, exist_ok=True)
-        self.current_chat_file = None
+
         self.create_widgets()
-
-        # Add menu for chat logs
         self.create_menu()
-
-        # Apply preferences (font/dark mode)
         self.apply_preferences()
-
-        # Bind close event to save chat
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def stop_responding(self):
@@ -134,49 +144,61 @@ class OllamaChatGUI:
 
     def create_widgets(self):
         self.chain_of_thought_hidden = False
-        # Add Load Knowledge Base button and model dropdown at the top
-        top_frame = tk.Frame(self.root)
-        top_frame.grid(row=0, column=0, sticky='ew', padx=10, pady=(10,0))
+        # Dark mode colors
+        prefs = getattr(self, 'preferences', {})
+        dark_mode = prefs.get('dark_mode', False)
+        bg = '#23272e' if dark_mode else None
+        fg = '#e6e6e6' if dark_mode else None
+        entry_bg = '#2d323b' if dark_mode else None
 
-        self.kb_button = tk.Button(top_frame, text="Load Knowledge Base", command=self.load_knowledge_base)
+        # Add Load Knowledge Base button and model dropdown at the top
+        self.top_frame = tk.Frame(self.root, bg=bg)
+        self.top_frame.grid(row=0, column=0, sticky='ew', padx=10, pady=(10,0))
+
+        self.kb_button = tk.Button(self.top_frame, text="Load Knowledge Base", command=self.load_knowledge_base, bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None)
         self.kb_button.grid(row=0, column=0, padx=(0,10))
 
         # Replace OptionMenu with ttk.Combobox for model selection
         self.model_var = tk.StringVar(value=self.model)
-        self.model_dropdown = ttk.Combobox(top_frame, textvariable=self.model_var, values=self.models, state="readonly")
+        self.model_dropdown = ttk.Combobox(self.top_frame, textvariable=self.model_var, values=self.models, state="readonly")
         self.model_dropdown.bind("<<ComboboxSelected>>", lambda event: self.on_model_select(self.model_var.get()))
         self.model_dropdown.grid(row=0, column=1, padx=(0,10))
 
         # Add Edit RAG Prompt button (disabled until KB is loaded)
-        self.edit_rag_prompt_button = tk.Button(top_frame, text="Edit RAG Prompt", command=self.edit_rag_prompt, state=tk.DISABLED)
+        self.edit_rag_prompt_button = tk.Button(self.top_frame, text="Edit RAG Prompt", command=self.edit_rag_prompt, state=tk.DISABLED, bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None)
         self.edit_rag_prompt_button.grid(row=0, column=2, padx=(0,10))
 
         # Add About button
-        self.about_button = tk.Button(top_frame, text="About", command=self.show_about)
+        self.about_button = tk.Button(self.top_frame, text="About", command=self.show_about, bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None)
         self.about_button.grid(row=0, column=3, padx=(0,10))
 
         # Add Hide Chain of Thought checkbox
         self.cot_var = tk.BooleanVar(value=False)
-        self.cot_checkbox = tk.Checkbutton(top_frame, text="Hide Chain of Thought", variable=self.cot_var, command=self.toggle_chain_of_thought)
+        self.cot_checkbox = tk.Checkbutton(self.top_frame, text="Hide Chain of Thought", variable=self.cot_var, command=self.toggle_chain_of_thought, bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None, selectcolor=bg)
         self.cot_checkbox.grid(row=0, column=4, padx=(0,10))
 
         # Chat area
-        self.chat_area = scrolledtext.ScrolledText(self.root, wrap=tk.WORD, state='disabled', width=60, height=20)
+        self.chat_area = scrolledtext.ScrolledText(self.root, wrap=tk.WORD, state='disabled', width=60, height=20, bg=entry_bg if dark_mode else None, fg=fg if dark_mode else None, insertbackground=fg if dark_mode else None)
         self.chat_area.grid(row=1, column=0, padx=10, pady=10, sticky='nsew')
+        # Set the internal frame of scrolledtext to dark if possible
+        try:
+            self.chat_area.config(bg=entry_bg if dark_mode else None, fg=fg if dark_mode else None, insertbackground=fg if dark_mode else None)
+        except Exception:
+            pass
 
         # Entry and send button at the bottom
-        entry_frame = tk.Frame(self.root)
-        entry_frame.grid(row=2, column=0, sticky='ew', padx=10, pady=(0,10))
-        self.entry = tk.Entry(entry_frame, width=50)
+        self.entry_frame = tk.Frame(self.root, bg=bg)
+        self.entry_frame.grid(row=2, column=0, sticky='ew', padx=10, pady=(0,10))
+        self.entry = tk.Entry(self.entry_frame, width=50, bg=entry_bg if dark_mode else None, fg=fg if dark_mode else None, insertbackground=fg if dark_mode else None)
         self.entry.pack(side=tk.LEFT, expand=True, fill=tk.X)
         self.entry.bind('<Return>', lambda event: self.send_message())
-        self.send_button = tk.Button(entry_frame, text="Send", command=self.send_message)
+        self.send_button = tk.Button(self.entry_frame, text="Send", command=self.send_message, bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None)
         self.send_button.pack(side=tk.LEFT, padx=10)
 
         # Stop Responding button at the very bottom
-        stop_frame = tk.Frame(self.root)
-        stop_frame.grid(row=3, column=0, sticky='ew', padx=10, pady=(0,10))
-        self.stop_button = tk.Button(stop_frame, text="Stop Responding", command=self.stop_responding)
+        self.stop_frame = tk.Frame(self.root, bg=bg)
+        self.stop_frame.grid(row=3, column=0, sticky='ew', padx=10, pady=(0,10))
+        self.stop_button = tk.Button(self.stop_frame, text="Stop Responding", command=self.stop_responding, bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None)
         self.stop_button.pack(fill=tk.X)
 
         # Configure grid weights for resizing
@@ -217,6 +239,7 @@ class OllamaChatGUI:
         popup = tk.Toplevel(self.root)
         popup.title("Preferences")
         popup.geometry("440x540")
+        from gui_utils import set_dark_mode_popup
         frame = tk.Frame(popup)
         frame.pack(fill=tk.BOTH, expand=True, padx=18, pady=14)
 
@@ -253,7 +276,18 @@ class OllamaChatGUI:
         tk.Checkbutton(frame, text="Auto-save chat logs", variable=auto_save_var).grid(row=10, column=0, columnspan=2, sticky='w')
         tk.Label(frame, text="Default Model:").grid(row=11, column=0, sticky='w')
         default_model_var = tk.StringVar(value=prefs['default_model'])
-        tk.OptionMenu(frame, default_model_var, *self.models).grid(row=11, column=1, sticky='ew')
+        option_menu = tk.OptionMenu(frame, default_model_var, *self.models)
+        option_menu.grid(row=11, column=1, sticky='ew')
+        # --- DARK MODE for OptionMenu and its menu ---
+        if self.preferences.get('dark_mode', False):
+            bg = '#23272e'
+            fg = '#e6e6e6'
+            border = '#444a52'
+            option_menu.config(bg=bg, fg=fg, activebackground='#444', activeforeground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1, borderwidth=1)
+            # Set menu colors
+            menu = option_menu['menu']
+            menu.config(bg=bg, fg=fg, activebackground='#444', activeforeground=fg, borderwidth=1)
+
         tk.Label(frame, text="Font Size:").grid(row=12, column=0, sticky='w')
         font_size_var = tk.IntVar(value=prefs['font_size'])
         tk.Entry(frame, textvariable=font_size_var).grid(row=12, column=1, sticky='ew')
@@ -276,6 +310,12 @@ class OllamaChatGUI:
                 prefs['temperature'] = float(temp_var.get())
                 prefs['top_p'] = float(topp_var.get())
                 prefs['max_tokens'] = int(max_tokens_var.get())
+                # Save preferences to file
+                try:
+                    with open(self.preferences_path, "w", encoding="utf-8") as f:
+                        json.dump(prefs, f, indent=2)
+                except Exception:
+                    messagebox.showerror("Save Error", "Could not save preferences to file.")
                 self.apply_preferences()
                 popup.destroy()
             except Exception:
@@ -285,6 +325,12 @@ class OllamaChatGUI:
         cancel_btn = tk.Button(btn_frame, text="Cancel", command=popup.destroy)
         cancel_btn.pack(side=tk.RIGHT, padx=(0,8))
         frame.grid_columnconfigure(1, weight=1)
+
+        # Now that ALL widgets are created, apply dark mode recursively
+        if self.preferences.get('dark_mode', False):
+            set_dark_mode_popup(popup)
+            # Explicitly style btn_frame for border
+            btn_frame.config(bg='#23272e', highlightbackground='#444a52', highlightcolor='#444a52', highlightthickness=1)
 
     def apply_preferences(self):
         # Apply font size and dark mode immediately
@@ -304,29 +350,48 @@ class OllamaChatGUI:
                 w.config(font=font)
             except Exception:
                 pass
-        # Dark mode
+
+        # --- DARK MODE STYLING ---
         if prefs.get('dark_mode', False):
             bg = '#23272e'
             fg = '#e6e6e6'
             entry_bg = '#2d323b'
+            border = '#444a52'
             self.root.configure(bg=bg)
+            # Chat area and entry
             for widget in [self.chat_area, self.entry]:
-                widget.config(bg=entry_bg, fg=fg, insertbackground=fg)
-            for widget in [self.kb_button, self.model_dropdown, self.edit_rag_prompt_button, self.about_button, self.cot_checkbox, self.send_button, self.stop_button]:
-                try:
-                    widget.config(bg=bg, fg=fg, activebackground='#444', activeforeground=fg)
-                except Exception:
-                    pass
+                widget.config(bg=entry_bg, fg=fg, insertbackground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
+            # Top frame and entry frame borders
+            for frame in [self.top_frame, self.entry_frame, self.stop_frame]:
+                frame.config(bg=bg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
+            # Buttons
+            for widget in [self.kb_button, self.edit_rag_prompt_button, self.about_button, self.send_button, self.stop_button]:
+                widget.config(bg=bg, fg=fg, activebackground='#444', activeforeground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1, borderwidth=1)
+            # Checkbox
+            self.cot_checkbox.config(bg=bg, fg=fg, activebackground='#444', activeforeground=fg, selectcolor=bg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
+            # --- TTK DARK MODE STYLE ---
+            style = ttk.Style()
+            try:
+                style.theme_use('clam')
+            except Exception:
+                pass
+            style.configure('TCombobox', fieldbackground=entry_bg, background=entry_bg, foreground=fg, bordercolor=border, lightcolor=border, darkcolor=border, borderwidth=1)
+            style.map('TCombobox', fieldbackground=[('readonly', entry_bg)], background=[('readonly', entry_bg)], foreground=[('readonly', fg)])
+            self.model_dropdown.configure(style='TCombobox')
+            # ---
         else:
             # Reset to default
             self.root.configure(bg=None)
             for widget in [self.chat_area, self.entry]:
-                widget.config(bg='white', fg='black', insertbackground='black')
-            for widget in [self.kb_button, self.model_dropdown, self.edit_rag_prompt_button, self.about_button, self.cot_checkbox, self.send_button, self.stop_button]:
-                try:
-                    widget.config(bg=None, fg=None, activebackground=None, activeforeground=None)
-                except Exception:
-                    pass
+                widget.config(bg='white', fg='black', insertbackground='black', highlightbackground=None, highlightcolor=None, highlightthickness=0)
+            for frame in [self.top_frame, self.entry_frame, self.stop_frame]:
+                frame.config(bg=None, highlightbackground=None, highlightcolor=None, highlightthickness=0)
+            for widget in [self.kb_button, self.edit_rag_prompt_button, self.about_button, self.send_button, self.stop_button]:
+                widget.config(bg=None, fg=None, activebackground=None, activeforeground=None, highlightbackground=None, highlightcolor=None, highlightthickness=0, borderwidth=1)
+            self.cot_checkbox.config(bg=None, fg=None, activebackground=None, activeforeground=None, selectcolor=None, highlightbackground=None, highlightcolor=None, highlightthickness=0)
+            style = ttk.Style()
+            style.theme_use('default')
+            self.model_dropdown.configure(style='TCombobox')
         # Set default model if changed
         if self.model != prefs.get('default_model'):
             self.model = prefs.get('default_model')
@@ -341,23 +406,31 @@ class OllamaChatGUI:
         popup = tk.Toplevel(self.root)
         popup.title("Previous Chats")
         popup.geometry("400x300")
-        frame = tk.Frame(popup)
+        from gui_utils import set_dark_mode_popup
+        dark_mode = self.preferences.get('dark_mode', False)
+        if dark_mode:
+            set_dark_mode_popup(popup)
+        border = '#444a52' if dark_mode else None
+        bg = '#23272e' if dark_mode else None
+        fg = '#e6e6e6' if dark_mode else None
+        entry_bg = '#2d323b' if dark_mode else None
+        frame = tk.Frame(popup, bg=bg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
         frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        listbox = tk.Listbox(frame, width=50, height=10)
+        listbox = tk.Listbox(frame, width=50, height=10, bg=entry_bg if dark_mode else None, fg=fg if dark_mode else None, highlightbackground=border, highlightcolor=border, selectbackground='#444' if dark_mode else None, selectforeground=fg if dark_mode else None)
         listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         for fname in files:
             listbox.insert(tk.END, fname)
-        scrollbar = tk.Scrollbar(frame, orient="vertical", command=listbox.yview)
+        scrollbar = tk.Scrollbar(frame, orient="vertical", command=listbox.yview, bg=bg, troughcolor=bg, activebackground='#444' if dark_mode else None, highlightbackground=border)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         listbox.config(yscrollcommand=scrollbar.set)
 
-        btn_frame = tk.Frame(popup)
+        btn_frame = tk.Frame(popup, bg=bg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
         btn_frame.pack(fill=tk.X, pady=(10,0))
-        open_btn = tk.Button(btn_frame, text="Open", command=lambda: self.open_selected_chat(listbox, files, popup))
+        open_btn = tk.Button(btn_frame, text="Open", command=lambda: self.open_selected_chat(listbox, files, popup), bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None, highlightbackground=border, highlightcolor=border, highlightthickness=1, borderwidth=1)
         open_btn.pack(side=tk.LEFT, padx=5)
-        del_btn = tk.Button(btn_frame, text="Delete", command=lambda: self.delete_selected_chat(listbox, files, popup))
+        del_btn = tk.Button(btn_frame, text="Delete", command=lambda: self.delete_selected_chat(listbox, files, popup), bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None, highlightbackground=border, highlightcolor=border, highlightthickness=1, borderwidth=1)
         del_btn.pack(side=tk.LEFT, padx=5)
-        close_btn = tk.Button(btn_frame, text="Close", command=popup.destroy)
+        close_btn = tk.Button(btn_frame, text="Close", command=popup.destroy, bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None, highlightbackground=border, highlightcolor=border, highlightthickness=1, borderwidth=1)
         close_btn.pack(side=tk.RIGHT, padx=5)
 
     def open_selected_chat(self, listbox, files, popup):
@@ -402,7 +475,13 @@ class OllamaChatGUI:
         self.root.destroy()
  
     def show_about(self):
-        show_about_popup(self.root)
+        from gui_utils import set_dark_mode_popup, show_about_popup
+        popup = tk.Toplevel(self.root)
+        popup.withdraw()
+        show_about_popup(popup)
+        if self.preferences.get('dark_mode', False):
+            set_dark_mode_popup(popup)
+        popup.deiconify()
 
     def load_knowledge_base(self):
         # Use the file_utils and rag_utils helpers
@@ -439,6 +518,9 @@ class OllamaChatGUI:
         popup = tk.Toplevel(self.root)
         popup.title("Edit RAG Prompt Template")
         popup.geometry("600x320")
+        from gui_utils import set_dark_mode_popup
+        if self.preferences.get('dark_mode', False):
+            set_dark_mode_popup(popup)
         frame = tk.Frame(popup)
         frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
         label = tk.Label(frame, text="Edit the RAG prompt template below. Use {context} for the context, {history} for the chat history, and {question} for the user question.", wraplength=560, justify='left')        
@@ -446,6 +528,10 @@ class OllamaChatGUI:
         text_widget = tk.Text(frame, wrap=tk.WORD, width=70, height=10)
         text_widget.pack(fill=tk.BOTH, expand=True)
         text_widget.insert(tk.END, self.rag_user_prompt_template)
+        save_btn = tk.Button(frame, text="Save")
+        cancel_btn = tk.Button(frame, text="Cancel", command=popup.destroy)
+        save_btn.pack(side=tk.RIGHT, pady=(8,0), padx=(0,8))
+        cancel_btn.pack(side=tk.RIGHT, pady=(8,0), padx=(0,8))
         def save_and_close():
             new_template = text_widget.get("1.0", tk.END).strip()
             if "{context}" not in new_template or "{question}" not in new_template or "{history}" not in new_template:
@@ -453,10 +539,18 @@ class OllamaChatGUI:
                 return
             self.rag_user_prompt_template = new_template
             popup.destroy()
-        save_btn = tk.Button(frame, text="Save", command=save_and_close)
-        save_btn.pack(side=tk.RIGHT, pady=(8,0), padx=(0,8))
-        cancel_btn = tk.Button(frame, text="Cancel", command=popup.destroy)
-        cancel_btn.pack(side=tk.RIGHT, pady=(8,0), padx=(0,8))
+        save_btn.config(command=save_and_close)
+        # --- DARK MODE for widgets ---
+        if self.preferences.get('dark_mode', False):
+            bg = '#23272e'
+            fg = '#e6e6e6'
+            entry_bg = '#2d323b'
+            border = '#444a52'
+            frame.config(bg=bg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
+            label.config(bg=bg, fg=fg)
+            text_widget.config(bg=entry_bg, fg=fg, insertbackground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
+            save_btn.config(bg=bg, fg=fg, activebackground='#444', activeforeground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1, borderwidth=1)
+            cancel_btn.config(bg=bg, fg=fg, activebackground='#444', activeforeground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1, borderwidth=1)
 
 
     # RAG utility methods are now imported from rag_utils
@@ -603,16 +697,12 @@ class OllamaChatGUI:
         
     def _make_citation_callback(self, chunk_indices):
         def callback(event):
-            self.show_citation_popup(chunk_indices)
+            show_citation_popup(self, chunk_indices)
             # Always move the cursor to the end and disable the widget after popup
             self.chat_area.mark_set(tk.INSERT, tk.END)
             self.chat_area.config(state='disabled')
             self.chat_area.see(tk.END)
         return callback
-
-    def show_citation_popup(self, chunk_indices):
-        # Use the helper from gui_utils (correct argument order)
-        show_citation_popup(self.root, getattr(self, 'kb_chunks', []), chunk_indices)
 
     def update_last_agent_message_stream(self, message, append=False):
         self.chat_area.config(state='normal')
