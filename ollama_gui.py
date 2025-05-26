@@ -1,8 +1,14 @@
+
 import tkinter as tk
 from tkinter import scrolledtext, messagebox
 import requests
 import threading
 from tkinter import ttk
+
+# Import utility modules
+from rag_utils import split_text, get_embeddings, get_query_embedding, retrieve_context
+from file_utils import load_knowledge_base_files, save_chat_history, load_chat_history, list_chat_logs, delete_chat_log
+from gui_utils import show_about_popup, show_citation_popup
 
 OLLAMA_API_URL = "http://localhost:11434"
 
@@ -405,102 +411,18 @@ class OllamaChatGUI:
         self.root.destroy()
  
     def show_about(self):
-        import webbrowser
-        popup = tk.Toplevel(self.root)
-        popup.title("About")
-        popup.geometry("480x370")
-        frame = tk.Frame(popup)
-        frame.pack(fill=tk.BOTH, expand=True, padx=18, pady=14)
-        app_label = tk.Label(frame, text="Ollama LLM Chat GUI", font=("Arial", 14, "bold"))
-        app_label.pack(anchor='w')
-        desc = "A local knowledge-augmented chat GUI for Ollama LLMs."
-        desc_label = tk.Label(frame, text=desc, font=("Arial", 10), justify='left', anchor='w')
-        desc_label.pack(anchor='w', pady=(2, 8))
-        author_label = tk.Label(frame, text="Author: Gaurav Patil", font=("Arial", 10), anchor='w', justify='left')
-        author_label.pack(anchor='w')
-        # GitHub link
-        github_label = tk.Label(frame, text="GitHub: github.com/gauravspatil", fg="blue", cursor="hand2", font=("Arial", 10), anchor='w', justify='left')
-        github_label.pack(anchor='w')
-        def open_github(event=None):
-            webbrowser.open_new("https://github.com/gauravspatil")
-        github_label.bind("<Button-1>", open_github)
-
-        # Ollama requirement
-        sep = tk.Label(frame, text="", font=("Arial", 2))
-        sep.pack(anchor='w', pady=(2,0))
-        ollama_label = tk.Label(frame, text="Ollama is required (not bundled). Download from:", font=("Arial", 10, "bold"), anchor='w', justify='left')
-        ollama_label.pack(anchor='w', pady=(6,0))
-        ollama_link = tk.Label(frame, text="https://ollama.com/download", fg="blue", cursor="hand2", font=("Arial", 10), anchor='w', justify='left')
-        ollama_link.pack(anchor='w')
-        def open_ollama(event=None):
-            webbrowser.open_new("https://ollama.com/download")
-        ollama_link.bind("<Button-1>", open_ollama)
-        ollama_note = tk.Label(frame, text="After installing, use: ollama pull <model>\nto download models (e.g., ollama pull llama3)", font=("Arial", 9), anchor='w', justify='left')
-        ollama_note.pack(anchor='w', pady=(2,8))
-
-        copyright_label = tk.Label(frame, text="© 2025 Gaurav Patil", font=("Arial", 10), anchor='w', justify='left')
-        copyright_label.pack(anchor='w', pady=(8,0))
-        oss_label = tk.Label(
-            frame,
-            text="Open Source under the MIT License. You may use, modify, and distribute this project as long as you provide credit to the author.\n\nCredits: tkinter, requests, numpy, PyPDF2, python-docx, Ollama.",
-            font=("Arial", 9), anchor='w', justify='left', wraplength=440)
-        oss_label.pack(anchor='w', pady=(4,0))
-        mit_label = tk.Label(frame, text="License: MIT", font=("Arial", 9, "italic"), anchor='w', justify='left')
-        mit_label.pack(anchor='w', pady=(2,0))
-        close_btn = tk.Button(frame, text="Close", command=popup.destroy)
-        close_btn.pack(anchor='e', pady=(16,0))
+        show_about_popup(self.root)
 
     def load_knowledge_base(self):
-        from tkinter import filedialog
-        import os
-        import tkinter.ttk as ttk
-        kb_texts = []
-        file_paths = filedialog.askopenfilenames(
-            title="Select Knowledge Base Files",
-            filetypes=[
-                ("Text, PDF, or Word Files", "*.txt;*.pdf;*.docx"),
-                ("All Files", "*.*")
-            ]
-        )
-        if not file_paths:
+        # Use the file_utils and rag_utils helpers
+        kb_text = load_knowledge_base_files(self.root)
+        if not kb_text:
             return
-        for file_path in file_paths:
-            ext = os.path.splitext(file_path)[1].lower()
-            if ext == ".pdf":
-                try:
-                    import PyPDF2
-                except ImportError:
-                    messagebox.showerror("Missing Dependency", "Please install PyPDF2: pip install PyPDF2")
-                    return
-                try:
-                    with open(file_path, 'rb') as f:
-                        reader = PyPDF2.PdfReader(f)
-                        kb_texts.append("\n".join(page.extract_text() or '' for page in reader.pages))
-                except Exception as e:
-                    messagebox.showerror("PDF Error", f"Could not read PDF: {e}")
-                    return
-            elif ext == ".docx":
-                try:
-                    import docx
-                except ImportError:
-                    messagebox.showerror("Missing Dependency", "Please install python-docx: pip install python-docx")
-                    return
-                try:
-                    doc = docx.Document(file_path)
-                    text = "\n".join([para.text for para in doc.paragraphs])
-                    kb_texts.append(text)
-                except Exception as e:
-                    messagebox.showerror("Word Error", f"Could not read Word document: {e}")
-                    return
-            else:
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        kb_texts.append(f.read())
-                except Exception as e:
-                    messagebox.showerror("File Error", f"Could not read file {file_path}: {e}")
-                    return
-        self.kb_text = "\n\n".join(kb_texts)
-        self.kb_chunks = self.split_text(self.kb_text)
+        self.kb_text = kb_text
+        # Use preferences for chunking
+        chunk_size = self.preferences.get('rag_chunk_size', 400)
+        chunk_overlap = self.preferences.get('rag_chunk_overlap', 50)
+        self.kb_chunks = split_text(self.kb_text, chunk_size=chunk_size, overlap=chunk_overlap)
 
         # Progress bar popup
         progress_popup = tk.Toplevel(self.root)
@@ -514,7 +436,8 @@ class OllamaChatGUI:
         progress["value"] = 0
         progress_popup.update()
 
-        self.kb_embeddings = self.get_embeddings(self.kb_chunks, progress_bar=progress, progress_popup=progress_popup)
+        # Use get_embeddings from rag_utils
+        self.kb_embeddings = get_embeddings(self.kb_chunks, progress_bar=progress, progress_popup=progress_popup)
         progress_popup.destroy()
         messagebox.showinfo("Knowledge Base Loaded", f"Loaded {len(self.kb_chunks)} chunks from knowledge base.")
 
@@ -544,121 +467,8 @@ class OllamaChatGUI:
         cancel_btn = tk.Button(frame, text="Cancel", command=popup.destroy)
         cancel_btn.pack(side=tk.RIGHT, pady=(8,0), padx=(0,8))
 
-    def split_text(self, text, chunk_size=None, overlap=None):
-        # Use preferences if available
-        if hasattr(self, 'preferences'):
-            chunk_size = chunk_size or self.preferences.get('rag_chunk_size', 400)
-            overlap = overlap or self.preferences.get('rag_chunk_overlap', 50)
-        else:
-            chunk_size = chunk_size or 400
-            overlap = overlap or 50
-        words = text.split()
-        chunks = []
-        for i in range(0, len(words), chunk_size - overlap):
-            chunk = ' '.join(words[i:i+chunk_size])
-            if chunk:
-                chunks.append(chunk)
-        return chunks
 
-    def get_embeddings(self, texts, model="nomic-embed-text", progress_bar=None, progress_popup=None):
-        # Use Ollama's embedding API
-        embeddings = []
-        for idx, text in enumerate(texts):
-            payload = {"model": model, "prompt": text}
-            try:
-                resp = requests.post(f"{OLLAMA_API_URL}/api/embeddings", json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-                emb = data.get("embedding")
-                if emb:
-                    embeddings.append(emb)
-                else:
-                    embeddings.append(None)
-            except Exception:
-                embeddings.append(None)
-            # Update progress bar if provided
-            if progress_bar is not None:
-                progress_bar["value"] = idx + 1
-                if progress_popup is not None:
-                    progress_popup.update()
-        return embeddings
-
-    def get_query_embedding(self, query, model="nomic-embed-text"):
-        # Ensure the embedding model is available before making the API call
-        if not self.ensure_embedding_model(model):
-            return None
-        payload = {"model": model, "prompt": query}
-        try:
-            resp = requests.post(f"{OLLAMA_API_URL}/api/embeddings", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            embedding = data.get("embedding")
-            if embedding is None:
-                from tkinter import messagebox
-                messagebox.showwarning("Embedding Warning", f"No embedding returned for query:\n{query}\nResponse: {data}")
-            return embedding
-        except Exception as e:
-            from tkinter import messagebox
-            messagebox.showerror("Embedding API Error", f"Error getting embedding for query:\n{query}\n\n{e}")
-            return None
-    
-    def ensure_embedding_model(self, model="nomic-embed-text"):
-        import subprocess
-        from tkinter import messagebox
-        try:
-            # Try to pull the embedding model (idempotent if already present)
-            if not hasattr(self, '_embedding_model_checked'):
-                result = subprocess.run(["ollama", "pull", model], capture_output=True, text=True, encoding="utf-8")
-                self._embedding_model_checked = (result.returncode == 0)
-            else:
-                # Already checked before, assume available
-                return True
-            if self._embedding_model_checked:
-                return True
-            else:
-                messagebox.showerror("Embedding Model Error", f"Failed to pull embedding model '{model}':\n{result.stderr}")
-                return False
-            if result.returncode == 0:
-                # Model is available, no error
-                return True
-            else:
-                messagebox.showerror("Embedding Model Error", f"Failed to pull embedding model '{model}':\n{result.stderr}")
-                return False
-        except Exception as e:
-            messagebox.showerror("Embedding Model Error", f"Error running ollama pull for embedding model '{model}':\n{e}")
-            return False
-
-    def retrieve_context(self, query, top_k=None):
-        if not hasattr(self, 'kb_chunks') or not hasattr(self, 'kb_embeddings'):
-            return "", []
-        import numpy as np
-        # Use preferences if available
-        prefs = getattr(self, 'preferences', {})
-        top_k = top_k or prefs.get('rag_top_k', 2)
-        threshold = prefs.get('rag_similarity_threshold', 0.05)
-        query_emb = self.get_query_embedding(query)
-        if not query_emb:
-            return "", []
-        # Compute cosine similarity
-        def cosine_sim(a, b):
-            a = np.array(a)
-            b = np.array(b)
-            return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
-        sims = []
-        valid_indices = []
-        for idx, emb in enumerate(self.kb_embeddings):
-            if emb is not None:
-                sims.append(cosine_sim(query_emb, emb))
-                valid_indices.append(idx)
-            else:
-                sims.append(float('-inf'))
-        # Get top_k most similar chunks (ignore negative infinity)
-        sims_np = np.array(sims)
-        filtered = [(i, sims_np[i]) for i in valid_indices if sims_np[i] > threshold]
-        filtered = sorted(filtered, key=lambda x: x[1], reverse=True)[:top_k]
-        context_chunks = [(i, self.kb_chunks[i]) for i, _ in filtered]
-        context = '\n'.join([chunk for _, chunk in context_chunks])
-        return context, context_chunks
+    # RAG utility methods are now imported from rag_utils
     
     def get_all_models(self):
         try:
@@ -797,19 +607,8 @@ class OllamaChatGUI:
         return callback
 
     def show_citation_popup(self, chunk_indices):
-        # Show a popup with the full text of the cited chunks
-        popup = tk.Toplevel(self.root)
-        popup.title("Cited Knowledge Base Chunks")
-        popup.geometry("600x400")
-        text_area = scrolledtext.ScrolledText(popup, wrap=tk.WORD, state='normal', width=80, height=20)
-        text_area.pack(expand=True, fill=tk.BOTH, padx=10, pady=10)
-        for idx in chunk_indices:
-            chunk_num = idx + 1
-            chunk_text = self.kb_chunks[idx] if hasattr(self, 'kb_chunks') and idx < len(self.kb_chunks) else '[Missing chunk]'
-            text_area.insert(tk.END, f"--- Chunk {chunk_num} ---\n{chunk_text}\n\n")
-        text_area.config(state='disabled')
-        close_btn = tk.Button(popup, text="Close", command=popup.destroy)
-        close_btn.pack(pady=(0,10))
+        # Use the helper from gui_utils
+        show_citation_popup(self.root, chunk_indices, getattr(self, 'kb_chunks', []))
 
     def update_last_agent_message_stream(self, message, append=False):
         self.chat_area.config(state='normal')
