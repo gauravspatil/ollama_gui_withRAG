@@ -2,7 +2,7 @@ import os
 import json
 from tkinter import filedialog, messagebox
 
-def load_knowledge_base_files():
+def load_knowledge_base_files(root):
     kb_texts = []
     file_paths = filedialog.askopenfilenames(
         title="Select Knowledge Base Files",
@@ -48,6 +48,8 @@ def load_knowledge_base_files():
             except Exception as e:
                 messagebox.showerror("File Error", f"Could not read file {file_path}: {e}")
                 return None
+    if isinstance(kb_texts, list):
+        return "\n\n".join(kb_texts)
     return kb_texts
 
 def save_chat_history(chat_logs_dir, chat_history, current_chat_file=None):

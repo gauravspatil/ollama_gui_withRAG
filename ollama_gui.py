@@ -6,7 +6,7 @@ import threading
 from tkinter import ttk
 
 # Import utility modules
-from rag_utils import split_text, get_embeddings, get_query_embedding, retrieve_context
+from rag_utils import split_text, get_embeddings, retrieve_context, get_query_embedding
 from file_utils import load_knowledge_base_files, save_chat_history, load_chat_history, list_chat_logs, delete_chat_log
 from gui_utils import show_about_popup, show_citation_popup
 
@@ -335,8 +335,8 @@ class OllamaChatGUI:
     # Removed show_model_params_dialog: Model parameters are now in Preferences dialog
 
     def show_chat_logs_dialog(self):
-        # List all chat log files
-        files = [f for f in os.listdir(self.chat_logs_dir) if f.endswith(".json")]
+        # Use utility to list chat logs
+        files = list_chat_logs(self.chat_logs_dir)
         files.sort(reverse=True)
         popup = tk.Toplevel(self.root)
         popup.title("Previous Chats")
@@ -368,9 +368,7 @@ class OllamaChatGUI:
         fname = files[sel[0]]
         fpath = os.path.join(self.chat_logs_dir, fname)
         try:
-            with open(fpath, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            self.chat_history = data.get("chat_history", [])
+            self.chat_history = load_chat_history(fpath)
             self.current_chat_file = fpath
             self.update_chat_area_chain_of_thought()
             popup.destroy()
@@ -386,7 +384,7 @@ class OllamaChatGUI:
         fpath = os.path.join(self.chat_logs_dir, fname)
         if messagebox.askyesno("Delete Chat", f"Are you sure you want to delete '{fname}'?"):
             try:
-                os.remove(fpath)
+                delete_chat_log(fpath)
                 listbox.delete(sel[0])
             except Exception as e:
                 messagebox.showerror("Delete Error", f"Could not delete chat log:\n{e}")
@@ -397,15 +395,8 @@ class OllamaChatGUI:
         if hasattr(self, 'preferences'):
             auto_save = self.preferences.get('auto_save_chat', True)
         if auto_save and hasattr(self, 'chat_history') and self.chat_history:
-            import datetime
-            if self.current_chat_file:
-                fpath = self.current_chat_file
-            else:
-                dt = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                fpath = os.path.join(self.chat_logs_dir, f"chat_{dt}.json")
             try:
-                with open(fpath, "w", encoding="utf-8") as f:
-                    json.dump({"chat_history": self.chat_history}, f, indent=2, ensure_ascii=False)
+                save_chat_history(self.chat_logs_dir, self.chat_history, self.current_chat_file)
             except Exception as e:
                 messagebox.showerror("Save Error", f"Could not save chat log:\n{e}")
         self.root.destroy()
@@ -520,7 +511,20 @@ class OllamaChatGUI:
     def get_llm_response(self, user_message):
         try:
             # RAG: retrieve context if KB loaded
-            context, context_chunks = self.retrieve_context(user_message)
+            if hasattr(self, 'kb_chunks') and hasattr(self, 'kb_embeddings'):
+                prefs = getattr(self, 'preferences', {})
+                top_k = prefs.get('rag_top_k', 2)
+                threshold = prefs.get('rag_similarity_threshold', 0.05)
+                context, context_chunks = retrieve_context(
+                    user_message,
+                    self.kb_chunks,
+                    self.kb_embeddings,
+                    top_k=top_k,
+                    threshold=threshold,
+                    get_query_embedding_func=get_query_embedding
+                )
+            else:
+                context, context_chunks = "", []
             citation_text = ""
             citation_indices = []
             if context_chunks:
@@ -607,8 +611,8 @@ class OllamaChatGUI:
         return callback
 
     def show_citation_popup(self, chunk_indices):
-        # Use the helper from gui_utils
-        show_citation_popup(self.root, chunk_indices, getattr(self, 'kb_chunks', []))
+        # Use the helper from gui_utils (correct argument order)
+        show_citation_popup(self.root, getattr(self, 'kb_chunks', []), chunk_indices)
 
     def update_last_agent_message_stream(self, message, append=False):
         self.chat_area.config(state='normal')
