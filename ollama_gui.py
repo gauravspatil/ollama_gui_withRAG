@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import scrolledtext, messagebox
 import requests
 import threading
+from tkinter import ttk
 
 OLLAMA_API_URL = "http://localhost:11434"
 
@@ -87,7 +88,7 @@ class OllamaChatGUI:
         self.rag_user_prompt_template = (
             "You are an expert assistant. Use ONLY the following context to answer the question. "
             "If the answer is not in the context, say you don't know. Do NOT use prior knowledge.\n\n"
-            "Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
+            "Context:\n{context}\n\nChat History:\n{history}\n\nQuestion: {question}\n\nAnswer:"
         )
         # Preferences (set before widgets for font/dark mode)
         self.preferences = {
@@ -134,8 +135,10 @@ class OllamaChatGUI:
         self.kb_button = tk.Button(top_frame, text="Load Knowledge Base", command=self.load_knowledge_base)
         self.kb_button.grid(row=0, column=0, padx=(0,10))
 
+        # Replace OptionMenu with ttk.Combobox for model selection
         self.model_var = tk.StringVar(value=self.model)
-        self.model_dropdown = tk.OptionMenu(top_frame, self.model_var, *self.models, command=self.on_model_select)
+        self.model_dropdown = ttk.Combobox(top_frame, textvariable=self.model_var, values=self.models, state="readonly")
+        self.model_dropdown.bind("<<ComboboxSelected>>", lambda event: self.on_model_select(self.model_var.get()))
         self.model_dropdown.grid(row=0, column=1, padx=(0,10))
 
         # Add Edit RAG Prompt button (disabled until KB is loaded)
@@ -524,15 +527,15 @@ class OllamaChatGUI:
         popup.geometry("600x320")
         frame = tk.Frame(popup)
         frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
-        label = tk.Label(frame, text="Edit the RAG prompt template below. Use {context} for the context and {question} for the user question.", wraplength=560, justify='left')
+        label = tk.Label(frame, text="Edit the RAG prompt template below. Use {context} for the context, {history} for the chat history, and {question} for the user question.", wraplength=560, justify='left')        
         label.pack(anchor='w', pady=(0,8))
         text_widget = tk.Text(frame, wrap=tk.WORD, width=70, height=10)
         text_widget.pack(fill=tk.BOTH, expand=True)
         text_widget.insert(tk.END, self.rag_user_prompt_template)
         def save_and_close():
             new_template = text_widget.get("1.0", tk.END).strip()
-            if "{context}" not in new_template or "{question}" not in new_template:
-                messagebox.showerror("Template Error", "Template must include {context} and {question}.")
+            if "{context}" not in new_template or "{question}" not in new_template or "{history}" not in new_template:
+                messagebox.showerror("Template Error", "Template must include {context}, {history}, and {question}.")
                 return
             self.rag_user_prompt_template = new_template
             popup.destroy()
@@ -714,10 +717,21 @@ class OllamaChatGUI:
                 citation_indices = [i for i, _ in context_chunks]
                 citation_text = "\n\n[Citations: " + ", ".join([f"Chunk {i+1}" for i in citation_indices]) + "]"
             # RAG: Always send context and question as a single user message for best model compatibility
+            # Format previous chat history (excluding current user message)
+            history_lines = []
+            for sender, msg in self.chat_history[:-1]:  # Exclude the just-appended user message
+                history_lines.append(f"{sender}: {msg}")
+            history_str = "\n".join(history_lines).strip()
+
+            # RAG: Always send context, chat history, and question as a single user message for best model compatibility
             if context:
-                user_prompt = self.rag_user_prompt_template.format(context=context, question=user_message)
+                user_prompt = self.rag_user_prompt_template.format(
+                    context=context,
+                    question=user_message,
+                    history=history_str
+                )
             else:
-                user_prompt = user_message
+                user_prompt = f"You are an expert assistant. You have access to the following chat history:\n\n{history_str}\n\n{user_message}"
             # Use model parameters from preferences
             prefs = getattr(self, 'preferences', {})
             payload = {
