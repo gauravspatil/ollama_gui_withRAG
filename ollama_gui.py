@@ -164,13 +164,14 @@ class OllamaChatGUI:
         self.model_dropdown.bind("<<ComboboxSelected>>", lambda event: self.on_model_select(self.model_var.get()))
         self.model_dropdown.grid(row=0, column=1, padx=(0,10))
 
+
         # Add Edit RAG Prompt button (disabled until KB is loaded)
         self.edit_rag_prompt_button = tk.Button(self.top_frame, text="Edit RAG Prompt", command=self.edit_rag_prompt, state=tk.DISABLED, bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None)
         self.edit_rag_prompt_button.grid(row=0, column=2, padx=(0,10))
 
-        # Add About button
-        self.about_button = tk.Button(self.top_frame, text="About", command=self.show_about, bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None)
-        self.about_button.grid(row=0, column=3, padx=(0,10))
+        # Add Tools button (replaces About button)
+        self.tools_button = tk.Button(self.top_frame, text="Tools", command=self.show_tools_popup, bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None)
+        self.tools_button.grid(row=0, column=3, padx=(0,10))
 
         # Add Hide Chain of Thought checkbox
         self.cot_var = tk.BooleanVar(value=False)
@@ -216,8 +217,58 @@ class OllamaChatGUI:
         settings_menu.add_command(label="Preferences...", command=self.show_preferences_dialog)
         menubar.add_cascade(label="Settings", menu=settings_menu)
 
-        # Add toplevel menu
+        # About menu (moved here)
+        about_menu = tk.Menu(menubar, tearoff=0)
+        about_menu.add_command(label="About", command=self.show_about)
+        menubar.add_cascade(label="About", menu=about_menu)
+
         self.root.config(menu=menubar)
+    def show_tools_popup(self):
+        import tkinter as tk
+        from tkinter import messagebox
+        try:
+            from tools import get_tool
+            import tools as tools_mod
+            tool_names = list(getattr(tools_mod, 'TOOLS', {}).keys())
+            tool_funcs = [getattr(tools_mod, 'TOOLS', {}).get(name) for name in tool_names]
+            tool_descs = []
+            for name, fn in zip(tool_names, tool_funcs):
+                # Compose a quick description for each tool
+                if fn and fn.__doc__:
+                    desc = fn.__doc__.strip()
+                else:
+                    # Fallback: use a default description for known tools
+                    if name == "summarise":
+                        desc = "Summarize the entire loaded knowledge base and present the main points."
+                    else:
+                        desc = "No description available."
+                tool_descs.append((name, desc))
+        except Exception:
+            messagebox.showerror("Tools Error", "Could not load tools list.")
+            return
+        popup = tk.Toplevel(self.root)
+        popup.title("Available Tools")
+        popup.geometry("440x320")
+        from gui_utils import set_dark_mode_popup
+        frame = tk.Frame(popup)
+        frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
+        label = tk.Label(frame, text="Available Tools:", font=("Arial", 12, "bold"))
+        label.pack(anchor='w', pady=(0,8))
+        # Use a Text widget for better formatting and dark mode support
+        text = tk.Text(frame, wrap=tk.WORD, width=54, height=12, state='normal', borderwidth=0, highlightthickness=0)
+        for name, desc in tool_descs:
+            text.insert(tk.END, f"/{name}", ("toolname",))
+            text.insert(tk.END, f": {desc}\n\n")
+        text.config(state='disabled')
+        text.pack(fill=tk.BOTH, expand=True)
+        close_btn = tk.Button(frame, text="Close", command=popup.destroy)
+        close_btn.pack(pady=(10,0))
+        # Apply dark mode styling if needed
+        if self.preferences.get('dark_mode', False):
+            set_dark_mode_popup(popup)
+            # Style the Text widget for dark mode
+            text.config(bg='#2d323b', fg='#e6e6e6', insertbackground='#e6e6e6', highlightbackground='#444a52', highlightcolor='#444a52')
+            text.tag_configure("toolname", foreground="#7ecfff", font=("Arial", 10, "bold"))
 
     def show_preferences_dialog(self):
         # Default preferences if not set
@@ -340,7 +391,7 @@ class OllamaChatGUI:
         font = ("Arial", prefs.get('font_size', 11))
         widgets = [self.chat_area, self.entry]
         # Top frame widgets
-        for w in [self.kb_button, self.model_dropdown, self.edit_rag_prompt_button, self.about_button, self.cot_checkbox]:
+        for w in [self.kb_button, self.model_dropdown, self.edit_rag_prompt_button, self.tools_button, self.cot_checkbox]:
             try:
                 w.config(font=font)
             except Exception:
@@ -365,7 +416,7 @@ class OllamaChatGUI:
             for frame in [self.top_frame, self.entry_frame, self.stop_frame]:
                 frame.config(bg=bg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
             # Buttons
-            for widget in [self.kb_button, self.edit_rag_prompt_button, self.about_button, self.send_button, self.stop_button]:
+            for widget in [self.kb_button, self.edit_rag_prompt_button, self.tools_button, self.send_button, self.stop_button]:
                 widget.config(bg=bg, fg=fg, activebackground='#444', activeforeground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1, borderwidth=1)
             # Checkbox
             self.cot_checkbox.config(bg=bg, fg=fg, activebackground='#444', activeforeground=fg, selectcolor=bg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
@@ -493,7 +544,6 @@ class OllamaChatGUI:
         chunk_size = self.preferences.get('rag_chunk_size', 400)
         chunk_overlap = self.preferences.get('rag_chunk_overlap', 50)
         self.kb_chunks = split_text(self.kb_text, chunk_size=chunk_size, overlap=chunk_overlap)
-
         # Progress bar popup
         progress_popup = tk.Toplevel(self.root)
         progress_popup.title("Embedding Knowledge Base")
@@ -572,9 +622,35 @@ class OllamaChatGUI:
         self.model = value
 
     def send_message(self):
+        import re
         user_message = self.entry.get().strip()
         if not user_message:
             return
+        # Tool command support: allow /toolname anywhere in the message
+        tool_match = re.search(r"/(\w+)", user_message)
+        tool_fn = None
+        command = None
+        if tool_match:
+            command = tool_match.group(1)
+            try:
+                from tools import get_tool
+                tool_fn = get_tool(command)
+            except Exception:
+                tool_fn = None
+        if tool_fn is not None:
+            # Call the tool function: (new_user_message, context_override, tool_response)
+            new_user_message, context_override, tool_response = tool_fn(self, user_message)
+            # Show the original user message in chat
+            self.append_chat("You", user_message)
+            self.entry.delete(0, tk.END)
+            self.stop_response = False
+            # If tool_response is not None, show it in chat (e.g., for immediate feedback)
+            if tool_response:
+                self.append_chat("Tool", tool_response)
+            # Start LLM response with context_override (force context_override to be used!)
+            threading.Thread(target=self.get_llm_response, args=(new_user_message, context_override), daemon=True).start()
+            return
+        # If not a valid tool, just treat as normal message
         self.append_chat("You", user_message)
         self.entry.delete(0, tk.END)
         self.stop_response = False
@@ -602,10 +678,20 @@ class OllamaChatGUI:
             self.chat_history.append((sender, message))
         # Do not update chain of thought visibility here; only update on toggle
 
-    def get_llm_response(self, user_message):
+    def get_llm_response(self, user_message, context_override=None):
         try:
-            # RAG: retrieve context if KB loaded
-            if hasattr(self, 'kb_chunks') and hasattr(self, 'kb_embeddings'):
+            # RAG: retrieve context if KB loaded, unless context_override is provided
+            if context_override is not None:
+                # Use all KB chunks as context, and treat as one big chunk
+                context = context_override
+                context_chunks = []
+                # For citations: show all chunks if available
+                citation_indices = []
+                citation_text = ""
+                if hasattr(self, 'kb_chunks') and self.kb_chunks:
+                    citation_indices = list(range(len(self.kb_chunks)))
+                    citation_text = "\n\n[Citations: " + ", ".join([f"Chunk {i+1}" for i in citation_indices]) + "]"
+            elif hasattr(self, 'kb_chunks') and hasattr(self, 'kb_embeddings'):
                 prefs = getattr(self, 'preferences', {})
                 top_k = prefs.get('rag_top_k', 2)
                 threshold = prefs.get('rag_similarity_threshold', 0.05)
@@ -617,13 +703,15 @@ class OllamaChatGUI:
                     threshold=threshold,
                     get_query_embedding_func=get_query_embedding
                 )
+                citation_indices = []
+                citation_text = ""
+                if context_chunks:
+                    citation_indices = [i for i, _ in context_chunks]
+                    citation_text = "\n\n[Citations: " + ", ".join([f"Chunk {i+1}" for i in citation_indices]) + "]"
             else:
                 context, context_chunks = "", []
-            citation_text = ""
-            citation_indices = []
-            if context_chunks:
-                citation_indices = [i for i, _ in context_chunks]
-                citation_text = "\n\n[Citations: " + ", ".join([f"Chunk {i+1}" for i in citation_indices]) + "]"
+                citation_indices = []
+                citation_text = ""
             # RAG: Always send context and question as a single user message for best model compatibility
             # Format previous chat history (excluding current user message)
             history_lines = []
@@ -673,7 +761,7 @@ class OllamaChatGUI:
                 self.update_last_agent_message_stream("[No response]", append=False)
             else:
                 # After streaming is done, append citations at the end as a clickable tag
-                if citation_text:
+                if citation_text and citation_indices:
                     self.insert_citation_tag(citation_text, citation_indices)
         except Exception as e:
             self.append_chat(self.model, f"[Error: {e}]")

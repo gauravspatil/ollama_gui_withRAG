@@ -1,0 +1,13 @@
+{
+  "rag_top_k": 2,
+  "rag_similarity_threshold": 0.05,
+  "rag_chunk_size": 50,
+  "rag_chunk_overlap": 10,
+  "auto_save_chat": true,
+  "default_model": "qwen3:30b-a3b",
+  "font_size": 11,
+  "dark_mode": true,
+  "temperature": 0.7,
+  "top_p": 1.0,
+  "max_tokens": 2048
+}

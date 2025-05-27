@@ -98,6 +98,7 @@ def show_citation_popup(parent, chunk_indices):
     label.pack(anchor='w', pady=(0,8))
     text = scrolledtext.ScrolledText(frame, wrap=tk.WORD, width=70, height=18, state='normal')
     text.pack(fill=tk.BOTH, expand=True)
+    # Show all cited chunks (no slicing or limiting)
     for idx in chunk_indices:
         if 0 <= idx < len(kb_chunks):
             chunk = kb_chunks[idx]
