@@ -27,19 +27,23 @@ def scrapeweb_tool(gui, user_message):
     if not url_match:
         return ("Sorry, I couldn't find a valid web link in your message.", None, "No URL found in the message.")
     url = url_match.group(0)
-    # Try to fetch the web page content
     try:
-        from gui_utils import set_dark_mode_popup  # Just to ensure import works, not used here
-        # Use requests to fetch the page
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
-        # Try to extract main text content (very basic: strip HTML tags)
+        html = resp.text
         import re as _re
-        text = resp.text
-        # Remove script/style
-        text = _re.sub(r'<(script|style)[^>]*>[\s\S]*?</\\1>', '', text, flags=_re.IGNORECASE)
-        # Remove HTML tags
-        text = _re.sub(r'<[^>]+>', '', text)
+        # Remove <script>, <style>, <noscript> blocks (case-insensitive)
+        html = _re.sub(r'<(script|style|noscript)[^>]*>[\s\S]*?</\1>', '', html, flags=_re.IGNORECASE)
+        # Extract <body>...</body> content if present
+        body_match = _re.search(r'<body[^>]*>([\s\S]*?)</body>', html, flags=_re.IGNORECASE)
+        if body_match:
+            body = body_match.group(1)
+        else:
+            body = html  # fallback: use all HTML
+        # Remove all remaining HTML tags
+        text = _re.sub(r'<[^>]+>', '', body)
+        # Remove HTML entities (basic)
+        text = _re.sub(r'&[a-zA-Z0-9#]+;', ' ', text)
         # Collapse whitespace
         text = _re.sub(r'\s+', ' ', text)
         # Truncate to a reasonable length for LLM context
