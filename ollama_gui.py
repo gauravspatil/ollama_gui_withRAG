@@ -31,6 +31,109 @@ import os
 import json
 
 class OllamaChatGUI:
+    def show_image_preview(self):
+        # Remove any previous preview
+        if hasattr(self, 'image_preview_index'):
+            self.chat_area.config(state='normal')
+            self.chat_area.delete(self.image_preview_index, f"{self.image_preview_index} lineend+1c")
+            del self.image_preview_index
+            self.chat_area.config(state='disabled')
+        # Show new preview if a pending image exists
+        if hasattr(self, 'pending_thumbnail') and self.pending_thumbnail:
+            self.chat_area.config(state='normal')
+            self.chat_area.insert(tk.END, "You (image attached): ")
+            self.chat_area.image_create(tk.END, image=self.pending_thumbnail)
+            self.chat_area.insert(tk.END, "\n")
+            self.image_preview_index = self.chat_area.index(f'end-2l')
+            self.chat_area.config(state='disabled')
+            self.chat_area.see(tk.END)
+
+    def clear_pending_image(self):
+        # Remove any pending image and thumbnail from the instance
+        if hasattr(self, 'pending_image'):
+            del self.pending_image
+        if hasattr(self, 'pending_thumbnail'):
+            del self.pending_thumbnail
+    def model_supports_images(self):
+        """
+        Returns True if the current model is known to support image input.
+        The list is based on Ollama's official vision/multimodal models as of May 2025:
+        https://ollama.com/search?c=vision
+        Update this list as new models are released.
+        """
+        model_name = self.model.lower()
+        # Substrings for all known vision/multimodal models (see Ollama vision models page)
+        vision_model_substrings = [
+            "gemma3", "llama4", "qwen2.5vl", "llava", "llava-next", "llava-llama3", "llava-phi3",
+            "llama3.2-vision", "minicpm-v", "moondream", "bakllava", "mistral-small3.1", "granite3.2-vision",
+            "multimodal", "image"  # keep generic terms for future-proofing
+        ]
+        return any(x in model_name for x in vision_model_substrings)
+
+    def send_image_to_model(self, image_bytes, user_message="", ext="png"):
+        # This assumes the Ollama API supports image input as base64 or multipart (LLaVA, etc.)
+        import base64
+        import requests
+        # Convert image to base64
+        img_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        
+        # Compose the payload for /api/generate (Ollama expects 'prompt' and 'images' fields)
+        prefs = getattr(self, 'preferences', {})
+        payload = {
+            "model": self.model,
+            "prompt": user_message or "Describe this image.",
+            "images": [img_b64],
+            "options": {
+                "temperature": prefs.get('temperature', 0.7),
+                "top_p": prefs.get('top_p', 1.0),
+                "num_predict": prefs.get('max_tokens', 2048)
+            }
+        }
+        
+        try:
+            resp = requests.post(f"{OLLAMA_API_URL}/api/generate", json=payload, stream=True)
+            resp.raise_for_status()
+            import json as _json
+            self.append_chat(self.model, "", streaming=True)
+            first_chunk = True
+            for line in resp.iter_lines():
+                if self.stop_response:
+                    break
+                if line:
+                    data = _json.loads(line)
+                    chunk = data.get("response", "")
+                    if chunk:
+                        self.update_last_agent_message_stream(chunk, append=(not first_chunk))
+                        first_chunk = False
+            if first_chunk:
+                self.update_last_agent_message_stream("[No response]", append=False)
+        except Exception as e:
+            self.append_chat(self.model, f"[Error: {e}]")
+
+    def on_paste_image(self, event=None):
+        try:
+            from PIL import ImageGrab, ImageTk
+            import io
+            img = ImageGrab.grabclipboard()
+            if img:
+                buf = io.BytesIO()
+                img.save(buf, format='PNG')
+                buf.seek(0)
+                # Clear any previous pending image/thumbnail
+                self.clear_pending_image()
+                # Prepare thumbnail
+                tk_img = ImageTk.PhotoImage(img.resize((64, 64)))
+                # Store only the most recent pending image and thumbnail
+                self.pending_image = buf.getvalue()
+                self.pending_thumbnail = tk_img  # Prevent garbage collection
+                self.show_image_preview()
+            else:
+                messagebox.showinfo("No image", "No image found in clipboard.")
+        except ImportError:
+            messagebox.showerror("Missing Dependency", "Pillow (PIL) is required for image paste support. Please install it with 'pip install pillow'.")
+        except Exception as e:
+            messagebox.showerror("Paste Error", f"Could not process clipboard image: {e}")
+
     def toggle_chain_of_thought(self):
         """
         Toggle hiding/showing chain of thought in the chat area.
@@ -41,12 +144,13 @@ class OllamaChatGUI:
     def update_chat_area_chain_of_thought(self):
         """
         Re-render the chat area, hiding or showing chain of thought as needed.
+        Supports persistent image thumbnails in chat history.
         """
         # Save scroll position
         yview = self.chat_area.yview()
         self.chat_area.config(state='normal')
         # To support unhiding, we need to reconstruct the chat from the message history
-        # We'll keep a list of (sender, message) tuples as self.chat_history
+        # We'll keep a list of (sender, message) or (sender, message, image_thumbnail) tuples as self.chat_history
         if not hasattr(self, 'chat_history'):
             # If chat_history doesn't exist, build it from the current chat area (best effort, only for first run)
             self.chat_history = []
@@ -56,27 +160,32 @@ class OllamaChatGUI:
             for line in lines:
                 if line.endswith(':') and not line.startswith(' '):
                     if current_sender is not None:
-                        self.chat_history.append((current_sender, '\n'.join(current_message)))
+                        self.chat_history.append((current_sender, '\n'.join(current_message), None))
                     current_sender = line[:-1]
                     current_message = []
                 else:
                     current_message.append(line)
             if current_sender is not None:
-                self.chat_history.append((current_sender, '\n'.join(current_message)))
+                self.chat_history.append((current_sender, '\n'.join(current_message), None))
 
         # Remove all content
         self.chat_area.delete('1.0', tk.END)
         import re
-        for sender, message in getattr(self, 'chat_history', []):
+        for idx, entry in enumerate(getattr(self, 'chat_history', [])):
+            if len(entry) == 3:
+                sender, message, _ = entry
+            else:
+                sender, message = entry
+            image_thumbnail = self.chat_thumbnails.get(idx)
             if getattr(self, 'chain_of_thought_hidden', False):
-                # Hide complete <think>...</think> blocks
                 message = re.sub(r'<think>[\s\S]*?</think>', '[Chain of thought hidden]', message, flags=re.IGNORECASE)
-                # Hide any remaining unmatched <think> blocks (i.e., <think> without </think>)
                 if '<think>' in message and '</think>' not in message:
-                    message = re.sub(r'<think>[\s\S]*', '[Chain of thought hidden]', message, flags=re.IGNORECASE)
-            self.chat_area.insert(tk.END, f"{sender}: {message}\n")
-        self.chat_area.config(state='disabled')
-        self.chat_area.yview_moveto(yview[0])
+                    message = re.sub(r'<think>.*', '[Chain of thought hidden]', message, flags=re.IGNORECASE)
+            self.chat_area.insert(tk.END, f"{sender}: ")
+            if image_thumbnail is not None:
+                self.chat_area.image_create(tk.END, image=image_thumbnail)
+                self.chat_area.insert(tk.END, " ")
+            self.chat_area.insert(tk.END, f"{message}\n")
     
     
     def __init__(self, root):
@@ -91,7 +200,7 @@ class OllamaChatGUI:
         self.chat_logs_dir = os.path.join(BASE_DIR, "chat_logs")
         os.makedirs(self.chat_logs_dir, exist_ok=True)
         self.current_chat_file = None
-
+        self.chat_thumbnails = {}
         # Load preferences if available
         self.preferences_path = os.path.join(BASE_DIR, "preferences.json")
         self.preferences = None
@@ -193,14 +302,50 @@ class OllamaChatGUI:
         self.entry = tk.Entry(self.entry_frame, width=50, bg=entry_bg if dark_mode else None, fg=fg if dark_mode else None, insertbackground=fg if dark_mode else None)
         self.entry.pack(side=tk.LEFT, expand=True, fill=tk.X)
         self.entry.bind('<Return>', lambda event: self.send_message())
+        # Bind Ctrl+V for image paste
+        self.entry.bind('<Control-v>', self.on_paste_image)
+        self.entry.bind('<Command-v>', self.on_paste_image)  # For Mac
+        # Drag-and-drop support removed
         self.send_button = tk.Button(self.entry_frame, text="Send", command=self.send_message, bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None)
         self.send_button.pack(side=tk.LEFT, padx=10)
 
-        # Stop Responding button at the very bottom
+        # Stop Responding and Attach Image buttons at the very bottom
         self.stop_frame = tk.Frame(self.root, bg=bg)
         self.stop_frame.grid(row=3, column=0, sticky='ew', padx=10, pady=(0,10))
+        # Attach Image button (left of Stop Responding)
+        self.attach_button = tk.Button(self.stop_frame, text="Attach Image", command=self.attach_image_from_file, bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None)
+        self.attach_button.pack(side=tk.LEFT, padx=(0, 10))
         self.stop_button = tk.Button(self.stop_frame, text="Stop Responding", command=self.stop_responding, bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None)
-        self.stop_button.pack(fill=tk.X)
+        self.stop_button.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    def attach_image_from_file(self):
+        if not self.model_supports_images():
+            messagebox.showwarning("Model Does Not Support Images", "The selected model does not support image input. Please select a vision/multimodal model.")
+            return
+        from tkinter import filedialog
+        from PIL import Image, ImageTk
+        import io
+        filetypes = [
+            ("Image files", "*.png;*.jpg;*.jpeg;*.bmp;*.gif"),
+            ("All files", "*.*")
+        ]
+        filepath = filedialog.askopenfilename(title="Select Image", filetypes=filetypes)
+        if not filepath:
+            return
+        try:
+            img = Image.open(filepath)
+            buf = io.BytesIO()
+            img.save(buf, format='PNG')
+            buf.seek(0)
+            # Clear any previous pending image/thumbnail
+            self.clear_pending_image()
+            # Prepare thumbnail
+            tk_img = ImageTk.PhotoImage(img.resize((64, 64)))
+            # Store only the most recent pending image and thumbnail
+            self.pending_image = buf.getvalue()
+            self.pending_thumbnail = tk_img  # Prevent garbage collection
+            self.show_image_preview()
+        except Exception as e:
+            messagebox.showerror("Image Error", f"Could not load image: {e}")
 
         # Configure grid weights for resizing
         self.root.grid_rowconfigure(1, weight=1)
@@ -437,12 +582,12 @@ class OllamaChatGUI:
                 widget.config(bg='white', fg='black', insertbackground='black', highlightbackground=None, highlightcolor=None, highlightthickness=0)
             for frame in [self.top_frame, self.entry_frame, self.stop_frame]:
                 frame.config(bg=None, highlightbackground=None, highlightcolor=None, highlightthickness=0)
-            for widget in [self.kb_button, self.edit_rag_prompt_button, self.about_button, self.send_button, self.stop_button]:
-                widget.config(bg=None, fg=None, activebackground=None, activeforeground=None, highlightbackground=None, highlightcolor=None, highlightthickness=0, borderwidth=1)
-            self.cot_checkbox.config(bg=None, fg=None, activebackground=None, activeforeground=None, selectcolor=None, highlightbackground=None, highlightcolor=None, highlightthickness=0)
-            style = ttk.Style()
-            style.theme_use('default')
-            self.model_dropdown.configure(style='TCombobox')
+        for widget in [self.kb_button, self.edit_rag_prompt_button, self.tools_button, self.send_button, self.stop_button]:
+            widget.config(bg=None, fg=None, activebackground=None, activeforeground=None, highlightbackground=None, highlightcolor=None, highlightthickness=0, borderwidth=1)
+        self.cot_checkbox.config(bg=None, fg=None, activebackground=None, activeforeground=None, selectcolor=None, highlightbackground=None, highlightcolor=None, highlightthickness=0)
+        style = ttk.Style()
+        style.theme_use('default')
+        self.model_dropdown.configure(style='TCombobox')
         # Set default model if changed
         if self.model != prefs.get('default_model'):
             self.model = prefs.get('default_model')
@@ -622,9 +767,22 @@ class OllamaChatGUI:
         self.model = value
 
     def send_message(self):
+        # If there is a pending image, check if model supports images
+        if hasattr(self, 'pending_image') and self.pending_image:
+            if not self.model_supports_images():
+                messagebox.showwarning("Model Does Not Support Images", "The selected model does not support image input. Please select a vision/multimodal model.")
+                # Remove preview if present
+                if hasattr(self, 'image_preview_index'):
+                    self.chat_area.config(state='normal')
+                    self.chat_area.delete(self.image_preview_index, f"{self.image_preview_index} lineend+1c")
+                    del self.image_preview_index
+                    self.chat_area.config(state='disabled')
+                self.clear_pending_image()
+                return
         import re
         user_message = self.entry.get().strip()
-        if not user_message:
+        # If both entry and pending image are empty, do nothing
+        if not user_message and not hasattr(self, 'pending_image'):
             return
         # Tool command support: allow /toolname anywhere in the message
         tool_match = re.search(r"/(\w+)", user_message)
@@ -638,6 +796,12 @@ class OllamaChatGUI:
             except Exception:
                 tool_fn = None
         if tool_fn is not None:
+            # Remove preview if present
+            if hasattr(self, 'image_preview_index'):
+                self.chat_area.config(state='normal')
+                self.chat_area.delete(self.image_preview_index, f"{self.image_preview_index} lineend+1c")
+                del self.image_preview_index
+                self.chat_area.config(state='disabled')
             # Call the tool function: (new_user_message, context_override, tool_response)
             new_user_message, context_override, tool_response = tool_fn(self, user_message)
             # Show the original user message in chat
@@ -650,33 +814,93 @@ class OllamaChatGUI:
             # Start LLM response with context_override (force context_override to be used!)
             threading.Thread(target=self.get_llm_response, args=(new_user_message, context_override), daemon=True).start()
             return
-        # If not a valid tool, just treat as normal message
+        # If there is a pending image, send it with the message
+        if hasattr(self, 'pending_image') and self.pending_image:
+            # Remove preview if present
+            if hasattr(self, 'image_preview_index'):
+                self.chat_area.config(state='normal')
+                self.chat_area.delete(self.image_preview_index, f"{self.image_preview_index} lineend+1c")
+                del self.image_preview_index
+                self.chat_area.config(state='disabled')
+            self.append_chat("You", "[Image sent] " + (user_message or ""), image_thumbnail=self.pending_thumbnail)
+            self.entry.delete(0, tk.END)
+            self.stop_response = False
+            image_to_send = self.pending_image
+            threading.Thread(target=self.send_image_to_model, args=(image_to_send, user_message), daemon=True).start()
+            self.clear_pending_image()
+            return
+        # If not a valid tool and no image, just treat as normal message
         self.append_chat("You", user_message)
         self.entry.delete(0, tk.END)
         self.stop_response = False
         threading.Thread(target=self.get_llm_response, args=(user_message,), daemon=True).start()
+    def send_images_to_model(self, images_bytes_list, user_message="", ext="png"):
+        import base64
+        import requests
+        img_b64_list = [base64.b64encode(img_bytes).decode("utf-8") for img_bytes in images_bytes_list]
+        prefs = getattr(self, 'preferences', {})
+        payload = {
+            "model": self.model,
+            "prompt": user_message or "Describe these images.",
+            "images": img_b64_list,
+            "options": {
+                "temperature": prefs.get('temperature', 0.7),
+                "top_p": prefs.get('top_p', 1.0),
+                "num_predict": prefs.get('max_tokens', 2048)
+            }
+        }
+        try:
+            resp = requests.post(f"{OLLAMA_API_URL}/api/generate", json=payload, stream=True)
+            resp.raise_for_status()
+            import json as _json
+            self.append_chat(self.model, "", streaming=True)
+            first_chunk = True
+            for line in resp.iter_lines():
+                if self.stop_response:
+                    break
+                if line:
+                    data = _json.loads(line)
+                    chunk = data.get("response", "")
+                    if chunk:
+                        self.update_last_agent_message_stream(chunk, append=(not first_chunk))
+                        first_chunk = False
+            if first_chunk:
+                self.update_last_agent_message_stream("[No response]", append=False)
+        except Exception as e:
+            self.append_chat(self.model, f"[Error: {e}]")
+        else:
+            # If not a valid tool and no image, just treat as normal message
+            self.append_chat("You", user_message)
+            self.entry.delete(0, tk.END)
+            self.stop_response = False
+            threading.Thread(target=self.get_llm_response, args=(user_message,), daemon=True).start()
 
-    def append_chat(self, sender, message, streaming=False):
+    def append_chat(self, sender, message, streaming=False, image_thumbnail=None):
         # Maintain chat history for hide/unhide chain of thought
         if not hasattr(self, 'chat_history'):
             self.chat_history = []
         if streaming and sender == self.model:
-            # Insert sender label and set last_agent_index to right after the label
             self.chat_area.config(state='normal')
             self.chat_area.insert(tk.END, f"{sender}:\n")
             self.last_agent_index = self.chat_area.index(tk.END)
             self.chat_area.config(state='disabled')
             self.chat_area.see(tk.END)
             # For streaming, add a placeholder to chat_history (will be updated in update_last_agent_message_stream)
-            self.chat_history.append((sender, ""))
+            self.chat_history.append((sender, "", None))
         else:
             self.chat_area.config(state='normal')
-            self.chat_area.insert(tk.END, f"{sender}: {message}\n")
+            self.chat_area.insert(tk.END, f"{sender}: ")
+            idx = len(self.chat_history)
+            if image_thumbnail is not None:
+                self.chat_area.image_create(tk.END, image=image_thumbnail)
+                self.chat_area.insert(tk.END, " ")
+                self.chat_thumbnails[idx] = image_thumbnail
+            self.chat_area.insert(tk.END, f"{message}\n")
             self.last_agent_index = None
             self.chat_area.config(state='disabled')
             self.chat_area.see(tk.END)
-            self.chat_history.append((sender, message))
-        # Do not update chain of thought visibility here; only update on toggle
+            # Only store None for image_thumbnail in chat_history to avoid JSON serialization issues
+            self.chat_history.append((sender, message, None))
 
     def get_llm_response(self, user_message, context_override=None):
         try:
@@ -715,7 +939,11 @@ class OllamaChatGUI:
             # RAG: Always send context and question as a single user message for best model compatibility
             # Format previous chat history (excluding current user message)
             history_lines = []
-            for sender, msg in self.chat_history[:-1]:  # Exclude the just-appended user message
+            for entry in self.chat_history[:-1]:  # Exclude the just-appended user message
+                if len(entry) == 3:
+                    sender, msg, _ = entry
+                else:
+                    sender, msg = entry
                 history_lines.append(f"{sender}: {msg}")
             history_str = "\n".join(history_lines).strip()
 
@@ -799,16 +1027,26 @@ class OllamaChatGUI:
                 self.chat_area.insert(tk.END, message)
                 # Update last message in chat_history
                 if hasattr(self, 'chat_history') and self.chat_history:
-                    sender, prev_msg = self.chat_history[-1]
-                    self.chat_history[-1] = (sender, prev_msg + message)
+                    entry = self.chat_history[-1]
+                    if len(entry) == 3:
+                        sender, prev_msg, image_thumbnail = entry
+                        self.chat_history[-1] = (sender, prev_msg + message, image_thumbnail)
+                    else:
+                        sender, prev_msg = entry
+                        self.chat_history[-1] = (sender, prev_msg + message)
             else:
                 # First chunk: clear any previous content after label
                 self.chat_area.delete(self.last_agent_index, tk.END)
                 self.chat_area.insert(tk.END, message)
                 # Set last message in chat_history
                 if hasattr(self, 'chat_history') and self.chat_history:
-                    sender, _ = self.chat_history[-1]
-                    self.chat_history[-1] = (sender, message)
+                    entry = self.chat_history[-1]
+                    if len(entry) == 3:
+                        sender, _, image_thumbnail = entry
+                        self.chat_history[-1] = (sender, message, image_thumbnail)
+                    else:
+                        sender, _ = entry
+                        self.chat_history[-1] = (sender, message)
         self.chat_area.config(state='disabled')
         self.chat_area.see(tk.END)
         # Do not update chain of thought visibility here; only update on toggle

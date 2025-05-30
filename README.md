@@ -6,6 +6,7 @@ A user-friendly Python Tkinter desktop app for chatting with local Ollama LLMs, 
 ## Features
 
 - **Model selection**: Auto-detects available models (excludes embedding models)
+- **Vision/Multimodal Model Support**: Attach or paste images for supported models (see below)
 - **Retrieval-Augmented Generation (RAG)**: Load multiple `.txt`, `.pdf`, or `.docx` files as a knowledge base
 - **Citations**: Clickable citations for retrieved knowledge chunks
 - **Tool Commands**: Use `/summarise`, `/scrapeweb`, and more, anywhere in your message
@@ -39,6 +40,12 @@ Click the **Tools** button in the app for a full list and descriptions.
 ## Packaging
 
 - Use PyInstaller with `ollama_gui.spec` to build a standalone executable.
+
+## Vision/Multimodal Model Support
+
+You can attach or paste images from clipboard when using a supported vision/multimodal model. The app will only allow image input for models known to support images, based on the [Ollama vision models list](https://ollama.com/search?c=vision). If you select a non-vision model, image features are disabled.
+
+If new vision models are released, update the `model_supports_images` method in `ollama_gui.py`.
 
 ## License
 

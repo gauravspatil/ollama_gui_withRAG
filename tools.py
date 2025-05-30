@@ -1,3 +1,15 @@
+def review_tool(gui, user_message):
+    """
+    Review the entire loaded knowledge base and provide feedback, suggestions, or identify issues, inconsistencies, or areas for improvement.
+    """
+    context = ""
+    for i, chunk in enumerate(getattr(gui, 'kb_chunks', [])):
+        context += f"[Chunk {i+1}]\n{chunk}\n\n"
+    new_user_message = (
+        "Please review the entire context provided below. "
+        "Identify any issues, inconsistencies, or areas for improvement, and provide constructive feedback or suggestions."
+    )
+    return new_user_message, context, None
 """
 Tool registry for user-invoked commands in the chat GUI.
 Each tool is a function that takes (gui_instance, user_message) and returns (new_user_message, context_override, tool_response).
@@ -55,10 +67,12 @@ def scrapeweb_tool(gui, user_message):
         return (f"Sorry, I couldn't fetch or process the web page: {url}", None, f"Error: {e}")
 
 
+
 # Tool registry: command name (without slash) -> function
 TOOLS = {
     "summarise": summarise_tool,
     "scrapeweb": scrapeweb_tool,
+    "review": review_tool,
 }
 
 def get_tool(command):
