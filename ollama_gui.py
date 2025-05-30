@@ -127,6 +127,16 @@ class OllamaChatGUI:
                 self.pending_image = buf.getvalue()
                 self.pending_thumbnail = tk_img  # Prevent garbage collection
                 self.show_image_preview()
+                # Clear the clipboard after pasting to prevent repeated attachment
+                try:
+                    import platform
+                    if platform.system() == "Windows":
+                        import ctypes
+                        ctypes.windll.user32.OpenClipboard(0)
+                        ctypes.windll.user32.EmptyClipboard()
+                        ctypes.windll.user32.CloseClipboard()
+                except Exception:
+                    pass
             else:
                 messagebox.showinfo("No image", "No image found in clipboard.")
         except ImportError:
@@ -881,7 +891,8 @@ class OllamaChatGUI:
             self.chat_history = []
         if streaming and sender == self.model:
             self.chat_area.config(state='normal')
-            self.chat_area.insert(tk.END, f"{sender}:\n")
+            # Do NOT add a new line after the model name for streaming
+            self.chat_area.insert(tk.END, f"{sender}: ")
             self.last_agent_index = self.chat_area.index(tk.END)
             self.chat_area.config(state='disabled')
             self.chat_area.see(tk.END)
@@ -889,6 +900,9 @@ class OllamaChatGUI:
             self.chat_history.append((sender, "", None))
         else:
             self.chat_area.config(state='normal')
+            # Always start user/agent message on a new line if not at the start
+            if self.chat_area.index(tk.END) != "1.0":
+                self.chat_area.insert(tk.END, "\n")
             self.chat_area.insert(tk.END, f"{sender}: ")
             idx = len(self.chat_history)
             if image_thumbnail is not None:
