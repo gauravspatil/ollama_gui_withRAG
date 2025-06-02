@@ -3,3 +3,4 @@ numpy
 PyPDF2
 python-docx
 tkinter
+Pillow
