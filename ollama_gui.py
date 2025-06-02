@@ -137,8 +137,7 @@ class OllamaChatGUI:
                         ctypes.windll.user32.CloseClipboard()
                 except Exception:
                     pass
-            else:
-                messagebox.showinfo("No image", "No image found in clipboard.")
+            # If no image is found, do nothing (user may be pasting text)
         except ImportError:
             messagebox.showerror("Missing Dependency", "Pillow (PIL) is required for image paste support. Please install it with 'pip install pillow'.")
         except Exception as e:
@@ -284,9 +283,9 @@ class OllamaChatGUI:
         self.model_dropdown.grid(row=0, column=1, padx=(0,10))
 
 
-        # Add Edit RAG Prompt button (disabled until KB is loaded)
-        self.edit_rag_prompt_button = tk.Button(self.top_frame, text="Edit RAG Prompt", command=self.edit_rag_prompt, state=tk.DISABLED, bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None)
-        self.edit_rag_prompt_button.grid(row=0, column=2, padx=(0,10))
+        # Add Edit Prompt button (always enabled)
+        self.edit_prompt_button = tk.Button(self.top_frame, text="Edit Prompt", command=self.edit_prompt, bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None)
+        self.edit_prompt_button.grid(row=0, column=2, padx=(0,10))
 
         # Add Tools button (replaces About button)
         self.tools_button = tk.Button(self.top_frame, text="Tools", command=self.show_tools_popup, bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None)
@@ -512,7 +511,8 @@ class OllamaChatGUI:
                 prefs['auto_save_chat'] = bool(auto_save_var.get())
                 prefs['default_model'] = default_model_var.get()
                 prefs['font_size'] = int(font_size_var.get())
-                prefs['dark_mode'] = bool(dark_mode_var.get())
+                # Fix: get() on IntVar/DoubleVar/BooleanVar returns the correct type, so no need to cast again
+                prefs['dark_mode'] = dark_mode_var.get() if isinstance(dark_mode_var.get(), bool) else bool(int(dark_mode_var.get()))
                 prefs['temperature'] = float(temp_var.get())
                 prefs['top_p'] = float(topp_var.get())
                 prefs['max_tokens'] = int(max_tokens_var.get())
@@ -524,8 +524,8 @@ class OllamaChatGUI:
                     messagebox.showerror("Save Error", "Could not save preferences to file.")
                 self.apply_preferences()
                 popup.destroy()
-            except Exception:
-                messagebox.showerror("Invalid Input", "Please enter valid values for all preferences.")
+            except Exception as e:
+                messagebox.showerror("Invalid Input", f"Please enter valid values for all preferences.\nError: {e}")
         save_btn = tk.Button(btn_frame, text="Save", command=save_prefs)
         save_btn.pack(side=tk.RIGHT, padx=(0,8))
         cancel_btn = tk.Button(btn_frame, text="Cancel", command=popup.destroy)
@@ -546,7 +546,7 @@ class OllamaChatGUI:
         font = ("Arial", prefs.get('font_size', 11))
         widgets = [self.chat_area, self.entry]
         # Top frame widgets
-        for w in [self.kb_button, self.model_dropdown, self.edit_rag_prompt_button, self.tools_button, self.cot_checkbox]:
+        for w in [self.kb_button, self.model_dropdown, self.edit_prompt_button, self.tools_button, self.cot_checkbox]:
             try:
                 w.config(font=font)
             except Exception:
@@ -571,7 +571,7 @@ class OllamaChatGUI:
             for frame in [self.top_frame, self.entry_frame, self.stop_frame]:
                 frame.config(bg=bg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
             # Buttons
-            for widget in [self.kb_button, self.edit_rag_prompt_button, self.tools_button, self.send_button, self.stop_button]:
+            for widget in [self.kb_button, self.edit_prompt_button, self.tools_button, self.send_button, self.stop_button]:
                 widget.config(bg=bg, fg=fg, activebackground='#444', activeforeground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1, borderwidth=1)
             # Checkbox
             self.cot_checkbox.config(bg=bg, fg=fg, activebackground='#444', activeforeground=fg, selectcolor=bg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
@@ -592,7 +592,7 @@ class OllamaChatGUI:
                 widget.config(bg='white', fg='black', insertbackground='black', highlightbackground=None, highlightcolor=None, highlightthickness=0)
             for frame in [self.top_frame, self.entry_frame, self.stop_frame]:
                 frame.config(bg=None, highlightbackground=None, highlightcolor=None, highlightthickness=0)
-        for widget in [self.kb_button, self.edit_rag_prompt_button, self.tools_button, self.send_button, self.stop_button]:
+        for widget in [self.kb_button, self.edit_prompt_button, self.tools_button, self.send_button, self.stop_button]:
             widget.config(bg=None, fg=None, activebackground=None, activeforeground=None, highlightbackground=None, highlightcolor=None, highlightthickness=0, borderwidth=1)
         self.cot_checkbox.config(bg=None, fg=None, activebackground=None, activeforeground=None, selectcolor=None, highlightbackground=None, highlightcolor=None, highlightthickness=0)
         style = ttk.Style()
@@ -716,35 +716,62 @@ class OllamaChatGUI:
         progress_popup.destroy()
         messagebox.showinfo("Knowledge Base Loaded", f"Loaded {len(self.kb_chunks)} chunks from knowledge base.")
 
-        # Enable the Edit RAG Prompt button now that KB is loaded
-        self.edit_rag_prompt_button.config(state=tk.NORMAL)
-    def edit_rag_prompt(self):
-        # Popup to edit the RAG user prompt template
+        # No longer needed: Edit Prompt button is always enabled
+
+    def edit_prompt(self):
+        # Popup to edit both the System and RAG prompt templates
         popup = tk.Toplevel(self.root)
-        popup.title("Edit RAG Prompt Template")
-        popup.geometry("600x320")
+        popup.title("Edit Prompts")
+        popup.geometry("700x500")
         from gui_utils import set_dark_mode_popup
         if self.preferences.get('dark_mode', False):
             set_dark_mode_popup(popup)
         frame = tk.Frame(popup)
         frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=12)
-        label = tk.Label(frame, text="Edit the RAG prompt template below. Use {context} for the context, {history} for the chat history, and {question} for the user question.", wraplength=560, justify='left')        
-        label.pack(anchor='w', pady=(0,8))
-        text_widget = tk.Text(frame, wrap=tk.WORD, width=70, height=10)
-        text_widget.pack(fill=tk.BOTH, expand=True)
-        text_widget.insert(tk.END, self.rag_user_prompt_template)
-        save_btn = tk.Button(frame, text="Save")
-        cancel_btn = tk.Button(frame, text="Cancel", command=popup.destroy)
-        save_btn.pack(side=tk.RIGHT, pady=(8,0), padx=(0,8))
-        cancel_btn.pack(side=tk.RIGHT, pady=(8,0), padx=(0,8))
+
+        # System prompt
+        sys_label = tk.Label(frame, text="System Prompt (used for normal chat):", font=("Arial", 11, "bold"), anchor='w', justify='left')
+        sys_label.pack(anchor='w', pady=(0,4))
+        sys_text = tk.Text(frame, wrap=tk.WORD, width=80, height=6)
+        sys_text.pack(fill=tk.BOTH, expand=False)
+        sys_prompt = getattr(self, 'system_prompt_template', "You are an expert assistant. You have access to the following chat history:\n\n{history}\n\n{user_message}")
+        sys_text.insert(tk.END, sys_prompt)
+
+        # RAG prompt
+        rag_label = tk.Label(frame, text="RAG Prompt (used when knowledge base is loaded):", font=("Arial", 11, "bold"), anchor='w', justify='left')
+        rag_label.pack(anchor='w', pady=(16,4))
+        rag_text = tk.Text(frame, wrap=tk.WORD, width=80, height=10)
+        rag_text.pack(fill=tk.BOTH, expand=True)
+        rag_text.insert(tk.END, self.rag_user_prompt_template)
+
+        # Help text
+        help_label = tk.Label(frame, text="RAG prompt must include {context}, {history}, and {question}. System prompt should include {history} and {user_message}.", font=("Arial", 9), fg="#888888", anchor='w', justify='left')
+        help_label.pack(anchor='w', pady=(8,0))
+
+        # Save/cancel buttons
+        btn_frame = tk.Frame(frame)
+        btn_frame.pack(fill=tk.X, pady=(16,0), anchor='e')
+        save_btn = tk.Button(btn_frame, text="Save")
+        cancel_btn = tk.Button(btn_frame, text="Cancel", command=popup.destroy)
+        save_btn.pack(side=tk.RIGHT, padx=(0,8))
+        cancel_btn.pack(side=tk.RIGHT, padx=(0,8))
+
         def save_and_close():
-            new_template = text_widget.get("1.0", tk.END).strip()
-            if "{context}" not in new_template or "{question}" not in new_template or "{history}" not in new_template:
-                messagebox.showerror("Template Error", "Template must include {context}, {history}, and {question}.")
+            new_sys = sys_text.get("1.0", tk.END).strip()
+            new_rag = rag_text.get("1.0", tk.END).strip()
+            # Validate RAG prompt
+            if "{context}" not in new_rag or "{question}" not in new_rag or "{history}" not in new_rag:
+                messagebox.showerror("Template Error", "RAG prompt must include {context}, {history}, and {question}.")
                 return
-            self.rag_user_prompt_template = new_template
+            # Validate system prompt
+            if "{history}" not in new_sys or "{user_message}" not in new_sys:
+                messagebox.showerror("Template Error", "System prompt should include {history} and {user_message}.")
+                return
+            self.rag_user_prompt_template = new_rag
+            self.system_prompt_template = new_sys
             popup.destroy()
         save_btn.config(command=save_and_close)
+
         # --- DARK MODE for widgets ---
         if self.preferences.get('dark_mode', False):
             bg = '#23272e'
@@ -752,10 +779,14 @@ class OllamaChatGUI:
             entry_bg = '#2d323b'
             border = '#444a52'
             frame.config(bg=bg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
-            label.config(bg=bg, fg=fg)
-            text_widget.config(bg=entry_bg, fg=fg, insertbackground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
+            sys_label.config(bg=bg, fg=fg)
+            sys_text.config(bg=entry_bg, fg=fg, insertbackground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
+            rag_label.config(bg=bg, fg=fg)
+            rag_text.config(bg=entry_bg, fg=fg, insertbackground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
+            help_label.config(bg=bg, fg="#bbbbbb")
             save_btn.config(bg=bg, fg=fg, activebackground='#444', activeforeground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1, borderwidth=1)
             cancel_btn.config(bg=bg, fg=fg, activebackground='#444', activeforeground=fg, highlightbackground=border, highlightcolor=border, highlightthickness=1, borderwidth=1)
+            btn_frame.config(bg=bg, highlightbackground=border, highlightcolor=border, highlightthickness=1)
 
 
     # RAG utility methods are now imported from rag_utils
