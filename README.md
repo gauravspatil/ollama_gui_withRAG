@@ -43,9 +43,21 @@ Click the **Tools** button in the app for a full list and descriptions.
 
 ## Vision/Multimodal Model Support
 
+
 You can attach or paste images from clipboard when using a supported vision/multimodal model. The app will only allow image input for models known to support images, based on the [Ollama vision models list](https://ollama.com/search?c=vision). If you select a non-vision model, image features are disabled.
 
 If new vision models are released, update the `model_supports_images` method in `ollama_gui.py`.
+
+## Screenshots
+
+Main Window  
+![Main Window](./Main%20Window.png)
+
+Edit Prompt Dialog  
+![Edit Prompt](./Edit%20prompt.png)
+
+Preferences Dialog  
+![Preferences](./Preferences.png)
 
 ## License
 
