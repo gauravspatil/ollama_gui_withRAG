@@ -326,6 +326,10 @@ class OllamaChatGUI:
         self.attach_button.pack(side=tk.LEFT, padx=(0, 10))
         self.stop_button = tk.Button(self.stop_frame, text="Stop Responding", command=self.stop_responding, bg=bg, fg=fg, activebackground='#444' if dark_mode else None, activeforeground=fg if dark_mode else None)
         self.stop_button.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # Ensure window and chat area resize properly
+        self.root.grid_rowconfigure(1, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
     def attach_image_from_file(self):
         if not self.model_supports_images():
             messagebox.showwarning("Model Does Not Support Images", "The selected model does not support image input. Please select a vision/multimodal model.")
